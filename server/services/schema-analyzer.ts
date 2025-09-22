@@ -41,8 +41,20 @@ export class SchemaAnalyzer {
       // Get all tables
       const tables = await postgresAnalyzer.getTables(database.schema || 'public');
       
+      // Get existing tables to avoid duplicates
+      const existingTables = await storage.getTablesByDatabaseId(databaseId);
+      const existingTableNames = new Set(existingTables.map(t => `${t.schema}.${t.name}`));
+
       // Store tables in database and populate their columns
       for (const tableInfo of tables) {
+        const tableKey = `${tableInfo.schemaName}.${tableInfo.tableName}`;
+        
+        // Skip if table already exists
+        if (existingTableNames.has(tableKey)) {
+          console.log(`Skipping existing table: ${tableKey}`);
+          continue;
+        }
+
         const createdTable = await storage.createTable({
           databaseId,
           name: tableInfo.tableName,
