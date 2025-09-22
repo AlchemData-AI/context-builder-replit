@@ -39,11 +39,11 @@ export class SchemaAnalyzer {
 
     try {
       // Get all tables
-      const tables = await postgresAnalyzer.getTables(database.schema);
+      const tables = await postgresAnalyzer.getTables(database.schema || 'public');
       
-      // Store tables in database
+      // Store tables in database and populate their columns
       for (const tableInfo of tables) {
-        await storage.createTable({
+        const createdTable = await storage.createTable({
           databaseId,
           name: tableInfo.tableName,
           schema: tableInfo.schemaName,
@@ -52,10 +52,30 @@ export class SchemaAnalyzer {
           isSelected: false,
           sampleSize: this.calculateDefaultSampleSize(tableInfo.rowCount)
         });
+
+        // Get and store column information for this table
+        const columns = await postgresAnalyzer.getColumns(tableInfo.tableName, tableInfo.schemaName);
+        
+        for (const columnInfo of columns) {
+          await storage.createColumn({
+            tableId: createdTable.id,
+            name: columnInfo.columnName,
+            dataType: columnInfo.dataType,
+            isNullable: columnInfo.isNullable,
+            isUnique: columnInfo.isUnique,
+            cardinality: null,
+            nullPercentage: null,
+            minValue: null,
+            maxValue: null,
+            distinctValues: null,
+            aiDescription: null,
+            smeValidated: false
+          });
+        }
       }
 
       // Get foreign keys
-      const foreignKeys = await postgresAnalyzer.getForeignKeys(database.schema);
+      const foreignKeys = await postgresAnalyzer.getForeignKeys(database.schema || 'public');
 
       // Store foreign key information
       for (const fk of foreignKeys) {
