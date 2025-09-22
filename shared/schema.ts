@@ -150,6 +150,17 @@ export const insertSmeQuestionSchema = createInsertSchema(smeQuestions).pick({
   priority: true,
 });
 
+export const insertAnalysisJobSchema = createInsertSchema(analysisJobs).pick({
+  databaseId: true,
+  type: true,
+  status: true,
+  progress: true,
+  result: true,
+  error: true,
+  startedAt: true,
+  completedAt: true,
+});
+
 // Types
 export type InsertConnection = z.infer<typeof insertConnectionSchema>;
 export type Connection = typeof connections.$inferSelect;
@@ -164,6 +175,7 @@ export type InsertAgentPersona = z.infer<typeof insertAgentPersonaSchema>;
 export type SmeQuestion = typeof smeQuestions.$inferSelect;
 export type InsertSmeQuestion = z.infer<typeof insertSmeQuestionSchema>;
 export type AnalysisJob = typeof analysisJobs.$inferSelect;
+export type InsertAnalysisJob = z.infer<typeof insertAnalysisJobSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 

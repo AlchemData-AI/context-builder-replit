@@ -205,7 +205,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         type: "statistical",
         status: "running",
         progress: 0,
-        startedAt: new Date()
+        result: null,
+        error: null,
+        startedAt: new Date(),
+        completedAt: null
       });
 
       // Run analysis in background
@@ -252,7 +255,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         type: "ai_context",
         status: "running",
         progress: 0,
-        startedAt: new Date()
+        result: null,
+        error: null,
+        startedAt: new Date(),
+        completedAt: null
       });
 
       // Get selected tables
@@ -276,7 +282,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             name: c.name,
             dataType: c.dataType,
             sampleValues: sampleData.map(row => row[c.name]).filter(v => v != null).slice(0, 10),
-            cardinality: c.cardinality,
+            cardinality: c.cardinality ?? undefined,
             nullPercentage: parseFloat(c.nullPercentage || '0')
           }));
           
@@ -318,7 +324,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         type: "join_detection",
         status: "running",
         progress: 0,
-        startedAt: new Date()
+        result: null,
+        error: null,
+        startedAt: new Date(),
+        completedAt: null
       });
 
       // Run semantic analysis
@@ -536,8 +545,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               id: table.id,
               name: table.name,
               schema: table.schema,
-              rowCount: table.rowCount,
-              columnCount: table.columnCount
+              rowCount: table.rowCount ?? undefined,
+              columnCount: table.columnCount ?? undefined
             });
             
             // Get and create Column nodes
@@ -548,16 +557,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 id: column.id,
                 name: column.name,
                 dataType: column.dataType,
-                description: column.aiDescription,
-                isNullable: column.isNullable,
-                cardinality: column.cardinality,
+                description: column.aiDescription ?? undefined,
+                isNullable: column.isNullable ?? false,
+                cardinality: column.cardinality ?? undefined,
                 nullPercentage: parseFloat(column.nullPercentage || '0')
               });
               
               // Create Value nodes for low-cardinality columns
               if (column.cardinality && column.cardinality <= 50 && column.distinctValues) {
                 try {
-                  const values = JSON.parse(column.distinctValues);
+                  const values = JSON.parse(String(column.distinctValues));
                   for (const value of values) {
                     await neo4jService.createValueNode(column.id, {
                       id: `${column.id}_${value}`,

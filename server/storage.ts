@@ -4,7 +4,7 @@ import {
   type Connection, type InsertConnection, type Database, type InsertDatabase,
   type Table, type InsertTable, type Column, type ForeignKey,
   type AgentPersona, type InsertAgentPersona, type SmeQuestion, type InsertSmeQuestion,
-  type AnalysisJob, type User, type InsertUser
+  type AnalysisJob, type InsertAnalysisJob, type User, type InsertUser
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc } from "drizzle-orm";
@@ -53,7 +53,7 @@ export interface IStorage {
   answerSmeQuestion(questionId: string, response: string): Promise<void>;
 
   // Analysis job methods
-  createAnalysisJob(job: Omit<AnalysisJob, 'id' | 'createdAt'>): Promise<AnalysisJob>;
+  createAnalysisJob(job: InsertAnalysisJob): Promise<AnalysisJob>;
   getAnalysisJobs(databaseId: string): Promise<AnalysisJob[]>;
   updateAnalysisJob(jobId: string, updates: Partial<AnalysisJob>): Promise<void>;
 }
@@ -264,7 +264,7 @@ export class DatabaseStorage implements IStorage {
       .where(eq(smeQuestions.id, questionId));
   }
 
-  async createAnalysisJob(job: Omit<AnalysisJob, 'id' | 'createdAt'>): Promise<AnalysisJob> {
+  async createAnalysisJob(job: InsertAnalysisJob): Promise<AnalysisJob> {
     const [result] = await db
       .insert(analysisJobs)
       .values(job as any)
