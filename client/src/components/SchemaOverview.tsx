@@ -145,7 +145,7 @@ export default function SchemaOverview() {
     return matchesSearch && matchesSchema;
   });
 
-  const uniqueSchemas = [...new Set(tables.map(t => t.schema))];
+  const uniqueSchemas = Array.from(new Set(tables.map(t => t.schema)));
   const activeTables = tables.filter(t => t.rowCount > 0);
   const totalColumns = tables.reduce((sum, t) => sum + t.columnCount, 0);
   const selectedTablesCount = tables.filter(t => t.isSelected).length;

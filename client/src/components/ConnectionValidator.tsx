@@ -101,24 +101,27 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
 
     switch (type) {
       case 'postgresql':
+        const pgConfig = config as { host: string; port: string; database: string; username: string; password: string; };
         connectionConfig = {
-          host: config.host,
-          port: parseInt(config.port),
-          database: config.database,
-          user: config.username,
-          password: config.password
+          host: pgConfig.host,
+          port: parseInt(pgConfig.port),
+          database: pgConfig.database,
+          user: pgConfig.username,
+          password: pgConfig.password
         };
         break;
       case 'gemini':
+        const geminiConfig = config as { apiKey: string; };
         connectionConfig = {
-          apiKey: config.apiKey
+          apiKey: geminiConfig.apiKey
         };
         break;
       case 'neo4j':
+        const neo4jConfig = config as { uri: string; username: string; password: string; };
         connectionConfig = {
-          uri: config.uri,
-          username: config.username,
-          password: config.password
+          uri: neo4jConfig.uri,
+          username: neo4jConfig.username,
+          password: neo4jConfig.password
         };
         break;
     }

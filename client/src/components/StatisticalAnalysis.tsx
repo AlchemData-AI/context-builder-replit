@@ -202,12 +202,12 @@ export default function StatisticalAnalysis() {
                 <div>
                   <div className="flex justify-between text-sm mb-2">
                     <span>Cardinality Analysis</span>
-                    <span className={summary?.analyzedColumns > 0 ? "text-emerald-600" : "text-muted-foreground"}>
-                      {summary?.analyzedColumns > 0 ? "Complete" : "Pending"}
+                    <span className={(summary?.analyzedColumns ?? 0) > 0 ? "text-emerald-600" : "text-muted-foreground"}>
+                      {(summary?.analyzedColumns ?? 0) > 0 ? "Complete" : "Pending"}
                     </span>
                   </div>
                   <Progress 
-                    value={summary?.analyzedColumns > 0 ? 100 : 0} 
+                    value={(summary?.analyzedColumns ?? 0) > 0 ? 100 : 0} 
                     className="h-2"
                   />
                 </div>
@@ -215,12 +215,12 @@ export default function StatisticalAnalysis() {
                 <div>
                   <div className="flex justify-between text-sm mb-2">
                     <span>Null Value Analysis</span>
-                    <span className={summary?.highNullColumns >= 0 ? "text-emerald-600" : "text-muted-foreground"}>
-                      {summary?.highNullColumns >= 0 ? "Complete" : "Pending"}
+                    <span className={(summary?.highNullColumns ?? -1) >= 0 ? "text-emerald-600" : "text-muted-foreground"}>
+                      {(summary?.highNullColumns ?? -1) >= 0 ? "Complete" : "Pending"}
                     </span>
                   </div>
                   <Progress 
-                    value={summary?.highNullColumns >= 0 ? 100 : 0} 
+                    value={(summary?.highNullColumns ?? -1) >= 0 ? 100 : 0} 
                     className="h-2"
                   />
                 </div>
