@@ -286,6 +286,45 @@ export class DatabaseStorage implements IStorage {
       .set(updates)
       .where(eq(analysisJobs.id, jobId));
   }
+
+  async deduplicateTablesForDatabase(databaseId: string): Promise<number> {
+    // Get all tables grouped by schema.name
+    const allTables = await db
+      .select()
+      .from(tables)
+      .where(eq(tables.databaseId, databaseId))
+      .orderBy(desc(tables.createdAt)); // Keep newest
+
+    const tableGroups = new Map<string, Table[]>();
+    for (const table of allTables) {
+      const key = `${table.schema}.${table.name}`;
+      if (!tableGroups.has(key)) {
+        tableGroups.set(key, []);
+      }
+      tableGroups.get(key)!.push(table);
+    }
+
+    let deletedCount = 0;
+    for (const [key, duplicates] of tableGroups) {
+      if (duplicates.length > 1) {
+        // Keep the first (newest) and delete the rest
+        const [keep, ...toDelete] = duplicates;
+        
+        for (const table of toDelete) {
+          // Delete associated columns and foreign keys first
+          await db.delete(columns).where(eq(columns.tableId, table.id));
+          await db.delete(foreignKeys).where(eq(foreignKeys.fromTableId, table.id));
+          await db.delete(foreignKeys).where(eq(foreignKeys.toTableId, table.id));
+          
+          // Delete the table
+          await db.delete(tables).where(eq(tables.id, table.id));
+          deletedCount++;
+        }
+      }
+    }
+
+    return deletedCount;
+  }
 }
 
 export const storage = new DatabaseStorage();

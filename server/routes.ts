@@ -449,6 +449,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Database cleanup routes
+  app.post('/api/databases/:id/cleanup-duplicates', async (req, res) => {
+    try {
+      const databaseId = req.params.id;
+      const deletedCount = await storage.deduplicateTablesForDatabase(databaseId);
+      res.json({ 
+        success: true, 
+        deletedTables: deletedCount,
+        message: `Removed ${deletedCount} duplicate tables` 
+      });
+    } catch (error) {
+      console.error('Error cleaning up duplicates:', error);
+      res.status(500).json({ error: 'Failed to cleanup duplicates' });
+    }
+  });
+
   // Agent Persona routes
   app.post("/api/agent-personas", async (req, res) => {
     try {
