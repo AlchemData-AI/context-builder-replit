@@ -1,0 +1,16 @@
+2. Context Builder
+    1. Database connector
+    2. System context - using Schema, DDL, imported queries and Statiscal analysis (nullabilty, cardianlity, etc.)
+    3. LLM generated context - using system context plus data sampling
+    4. Human Dialogue - LLM generates hypothesis and validates deeper nuances from the agent builder. Examples are below
+        1. We noticed that 535 rows have null values in this column, can you please help us understand in what case would this happen?
+        2. We noticed that this column has 35 unique event names across the rows, we have anticipated the context for them, can you please review the same?
+        3. We noticed that the three columns main_order_id, order_id and order_line_id are present in the same table, can you please help us identify the difference between the three columns?
+    5. Relational context - Establishing relations within the data models and also between other data models is super important. All of the above context should help us suggest most of these joins, and then the intention is to validate all of these with the agent builder.
+    6. Persona context - The data model’s persona context will sit at the top of our context’s hierarchy and help the agent maneuver amongst mutiple data models built by different users, and understanding the most relevant ones to further deep-dive into. An exaple would be - “I am a GTM sales agent that understands all the orders placed on our website. I understand the different users who placed these orders, and the products that they placed it for. ”. The exact stored data would be much more compact, and might only have keywords.
+        1. Jargons - We will import slack queries and outlook mails to understand commonly used metrics that are being referred uning non-traditional jargons, and check with agent builder on the definitions of the same
+        2. Commonly fetched data - Saving views or queries that have been requested for multiple times. Buyer can have an option to add these manually or import.
+    7. Storage - All of the context generated and the respective human feedback received is compiled using LLM and stored in the system, to be accessed by MCP and/or by the agent for RAG. (Choice to be made between Knowledge Graph database vs Vector Database)
+        1. For lower cardinality columns, we will be storing their distinct values as context nodes
+        2. There will be only one single source of truth for the context against a table, column and value. Agent builders will be asked to skip pre-populated values, coulmns and tables, or be given an option to raise a conflict which can be resolved by admins. There can be as many relations for a single cell.
+        3. Any changes in data schema also need to be highlighted to the agent builders, who in turn are expected to make corrections if needed
