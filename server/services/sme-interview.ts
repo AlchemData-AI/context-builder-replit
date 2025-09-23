@@ -223,6 +223,7 @@ export class SMEInterviewService {
     const questions = await storage.getQuestionsByDatabaseId(databaseId);
     const tables = await storage.getTablesByDatabaseId(databaseId);
     const personas = await storage.getPersonasByDatabaseId(databaseId);
+    const contextItems = await storage.getContextsByDatabaseId(databaseId);
 
     // Get all columns for context
     const allColumns: Column[] = [];

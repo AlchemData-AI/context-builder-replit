@@ -1023,8 +1023,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', 'attachment; filename=sme-questions.csv');
       
+      // Get AI context data for tables and columns
+      const contextItems = await storage.getContextsByDatabaseId(id);
+      const tables = await storage.getTablesByDatabaseId(id);
+      const allColumns = [];
+      for (const table of tables) {
+        const columns = await storage.getColumnsByTableId(table.id);
+        allColumns.push(...columns);
+      }
+      
       // Convert to CSV format
       let csvOutput = '';
+      
+      // Add AI-Generated Table Context section
+      csvOutput += 'AI-GENERATED TABLE CONTEXT\n';
+      csvOutput += 'Table,Description,Business Purpose,Data Characteristics\n';
+      for (const contextItem of contextItems) {
+        const table = tables.find(t => t.id === contextItem.tableId);
+        const tableDesc = contextItem.tableDesc;
+        if (tableDesc && typeof tableDesc === 'object') {
+          const desc = tableDesc as any;
+          csvOutput += `"${table?.name || 'Unknown'}","${desc.description || ''}","${desc.business_purpose || ''}","${desc.data_characteristics || ''}"\n`;
+        }
+      }
+      csvOutput += '\n';
+      
+      // Add AI-Generated Column Context section
+      csvOutput += 'AI-GENERATED COLUMN CONTEXT\n';
+      csvOutput += 'Table,Column,Data Type,AI Hypothesis,Business Meaning,Data Patterns,Sample Values\n';
+      for (const contextItem of contextItems) {
+        const table = tables.find(t => t.id === contextItem.tableId);
+        const columnDescs = contextItem.columnDescs;
+        if (Array.isArray(columnDescs)) {
+          for (const colDesc of columnDescs) {
+            const column = allColumns.find(c => c.tableId === contextItem.tableId && c.name === colDesc.column_name);
+            const enumValues = colDesc.enum_values ? colDesc.enum_values.slice(0, 10).join('; ') : '';
+            csvOutput += `"${table?.name || 'Unknown'}","${colDesc.column_name}","${column?.dataType || 'Unknown'}","${colDesc.description || ''}","${colDesc.business_meaning || ''}","${colDesc.data_patterns || ''}","${enumValues}"\n`;
+          }
+        }
+      }
+      csvOutput += '\n';
       
       // Add Agent Persona questions
       if (csvData.agentPersonaQuestions.length > 0) {
