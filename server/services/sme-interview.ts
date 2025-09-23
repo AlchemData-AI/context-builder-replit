@@ -1,6 +1,7 @@
 import { geminiService, type SMEQuestionSet } from './gemini';
 import { schemaAnalyzer } from './schema-analyzer';
 import { statisticalAnalyzer } from './statistical-analyzer';
+import { postgresAnalyzer } from './postgres-analyzer';
 import { storage } from '../storage';
 import type { Table, Column, SmeQuestion } from '@shared/schema';
 
@@ -36,6 +37,7 @@ export interface CSVExport {
     column: string;
     dataType: string;
     hypothesis: string;
+    sampleValues: string;
     question: string;
     questionType: string;
     priority: string;
@@ -225,11 +227,104 @@ export class SMEInterviewService {
     const personas = await storage.getPersonasByDatabaseId(databaseId);
     const contextItems = await storage.getContextsByDatabaseId(databaseId);
 
-    // Get all columns for context
+    // Get all columns for context and sample values
     const allColumns: Column[] = [];
-    for (const table of tables) {
-      const columns = await storage.getColumnsByTableId(table.id);
-      allColumns.push(...columns);
+    const columnSampleValues = new Map<string, string>(); // columnId -> sample values string
+    
+    // Get database connection for sample values (wrap in try/finally for proper cleanup)
+    const database = await storage.getDatabase(databaseId);
+    let postgresConnected = false;
+    
+    try {
+      if (database) {
+        const connection = await storage.getConnection(database.connectionId);
+        if (connection) {
+          const config = connection.config as any;
+          postgresConnected = await postgresAnalyzer.connect(config);
+        }
+      }
+
+      for (const table of tables) {
+        const columns = await storage.getColumnsByTableId(table.id);
+        allColumns.push(...columns);
+        
+        // Get sample values for each column if connected to database
+        if (postgresConnected) {
+          for (const column of columns) {
+            try {
+              // Check if we already have distinct values from previous analysis
+              let sampleValuesStr = 'No sample values available';
+              
+              if (column.distinctValues) {
+                // Use existing distinct values if available
+                try {
+                  const existingValues = JSON.parse(column.distinctValues);
+                  if (Array.isArray(existingValues) && existingValues.length > 0) {
+                    const filteredValues = existingValues
+                      .filter(val => val != null && val !== '')
+                      .slice(0, 5)
+                      .map(val => String(val).substring(0, 50)); // Truncate long values
+                    sampleValuesStr = filteredValues.length > 0 ? filteredValues.join(', ') : 'No distinct values found';
+                  }
+                } catch (parseError) {
+                  // Fall through to fetch from database
+                }
+              }
+              
+              // If no existing values, fetch from database (only for likely enum columns)
+              if (sampleValuesStr === 'No sample values available' && 
+                  (column.cardinality <= 100 || ['varchar', 'text', 'char'].some(type => column.dataType.toLowerCase().includes(type)))) {
+                const distinctValues = await postgresAnalyzer.getDistinctValues(
+                  table.name,
+                  column.name,
+                  5, // Limit to 5 sample values
+                  table.schema || 'public'
+                );
+                const filteredValues = distinctValues
+                  .filter(val => val != null && val !== '')
+                  .map(val => String(val).substring(0, 50)); // Truncate long values
+                sampleValuesStr = filteredValues.length > 0 
+                  ? filteredValues.join(', ')
+                  : 'No distinct values found';
+              }
+              
+              columnSampleValues.set(column.id, sampleValuesStr);
+            } catch (error) {
+              console.warn(`Failed to get sample values for ${table.name}.${column.name}:`, error);
+              columnSampleValues.set(column.id, 'Unable to fetch sample values');
+            }
+          }
+        } else {
+          // If not connected, check for existing distinct values in storage
+          for (const column of columns) {
+            let sampleValuesStr = 'No sample values available';
+            if (column.distinctValues) {
+              try {
+                const existingValues = JSON.parse(column.distinctValues);
+                if (Array.isArray(existingValues) && existingValues.length > 0) {
+                  const filteredValues = existingValues
+                    .filter(val => val != null && val !== '')
+                    .slice(0, 5)
+                    .map(val => String(val).substring(0, 50));
+                  sampleValuesStr = filteredValues.length > 0 ? filteredValues.join(', ') : 'No distinct values found';
+                }
+              } catch (parseError) {
+                // Keep default message
+              }
+            }
+            columnSampleValues.set(column.id, sampleValuesStr);
+          }
+        }
+      }
+    } finally {
+      // Ensure database connection is always cleaned up
+      if (postgresConnected) {
+        try {
+          await postgresAnalyzer.disconnect();
+        } catch (error) {
+          console.warn('Failed to disconnect from PostgreSQL:', error);
+        }
+      }
     }
 
     const export_data: CSVExport = {
@@ -260,11 +355,13 @@ export class SMEInterviewService {
         });
       } else {
         // Column-level question
+        const sampleValues = column ? columnSampleValues.get(column.id) || 'No sample values available' : 'No sample values available';
         export_data.columnQuestions.push({
           table: table?.name || 'Unknown',
           column: column?.name || 'Unknown',
           dataType: column?.dataType || 'Unknown',
           hypothesis: column?.aiDescription || '',
+          sampleValues,
           ...baseData
         });
       }
