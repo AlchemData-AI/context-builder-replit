@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -33,6 +34,8 @@ export default function SchemaOverview() {
   const [selectedSchema, setSelectedSchema] = useState("all");
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
   const [currentDatabase, setCurrentDatabase] = useState<string>("");
+  const [showSchemaDialog, setShowSchemaDialog] = useState(false);
+  const [selectedSchemaForCreation, setSelectedSchemaForCreation] = useState<string>("");
 
   // Fetch connections to get PostgreSQL connection
   const { data: connections = [] } = useQuery({
@@ -45,6 +48,19 @@ export default function SchemaOverview() {
   });
 
   const postgresConnection = connections.find((c: any) => c.type === 'postgresql' && c.status === 'connected');
+
+  // Fetch available schemas for the PostgreSQL connection
+  const { data: availableSchemas = [] } = useQuery({
+    queryKey: ['/api/connections', postgresConnection?.id, 'schemas'],
+    queryFn: async () => {
+      if (!postgresConnection) return [];
+      const response = await fetch(`/api/connections/${postgresConnection.id}/schemas`);
+      if (!response.ok) throw new Error('Failed to fetch schemas');
+      const data = await response.json();
+      return data.schemas || [];
+    },
+    enabled: !!postgresConnection
+  });
 
   // Fetch databases for the PostgreSQL connection
   const { data: databases = [] } = useQuery({
@@ -91,19 +107,31 @@ export default function SchemaOverview() {
     }
   });
 
-  // Create database if none exists
+  // Create database with selected schema
   const createDatabase = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (schema: string) => {
       if (!postgresConnection) throw new Error('No PostgreSQL connection');
       const response = await apiRequest('POST', '/api/databases', {
         connectionId: postgresConnection.id,
         name: 'default',
-        schema: 'public'
+        schema: schema
       });
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (database) => {
       queryClient.invalidateQueries({ queryKey: ['/api/databases'] });
+      setShowSchemaDialog(false);
+      toast({ 
+        title: "Database created", 
+        description: `Database created with schema: ${selectedSchemaForCreation}` 
+      });
+      // Automatically trigger schema analysis after database creation
+      setTimeout(() => {
+        analyzeSchema.mutate(database.id);
+      }, 500);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Database creation failed", description: error.message, variant: "destructive" });
     }
   });
 
@@ -135,7 +163,24 @@ export default function SchemaOverview() {
     if (database) {
       analyzeSchema.mutate(database.id);
     } else if (postgresConnection) {
-      createDatabase.mutate();
+      // Show schema selection dialog
+      if (availableSchemas.length > 1) {
+        setShowSchemaDialog(true);
+      } else if (availableSchemas.length === 1) {
+        // Only one schema available, use it directly
+        setSelectedSchemaForCreation(availableSchemas[0]);
+        createDatabase.mutate(availableSchemas[0]);
+      } else {
+        // Fallback to public if no schemas found
+        setSelectedSchemaForCreation('public');
+        createDatabase.mutate('public');
+      }
+    }
+  };
+
+  const handleCreateDatabaseWithSchema = () => {
+    if (selectedSchemaForCreation) {
+      createDatabase.mutate(selectedSchemaForCreation);
     }
   };
 
@@ -358,6 +403,48 @@ export default function SchemaOverview() {
           )}
         </CardContent>
       </Card>
+
+      {/* Schema Selection Dialog */}
+      <Dialog open={showSchemaDialog} onOpenChange={setShowSchemaDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Select Database Schema</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Multiple schemas were found in your database. Please select which schema contains the tables you want to analyze:
+            </p>
+            <Select value={selectedSchemaForCreation} onValueChange={setSelectedSchemaForCreation}>
+              <SelectTrigger data-testid="select-schema-creation">
+                <SelectValue placeholder="Choose a schema..." />
+              </SelectTrigger>
+              <SelectContent>
+                {availableSchemas.map((schema: string) => (
+                  <SelectItem key={schema} value={schema}>
+                    {schema}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex justify-end space-x-2">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowSchemaDialog(false)}
+                data-testid="button-cancel-schema"
+              >
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleCreateDatabaseWithSchema}
+                disabled={!selectedSchemaForCreation || createDatabase.isPending}
+                data-testid="button-create-with-schema"
+              >
+                {createDatabase.isPending ? "Creating..." : "Create Database"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

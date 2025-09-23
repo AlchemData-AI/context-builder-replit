@@ -230,6 +230,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get available schemas for a PostgreSQL connection
+  app.get("/api/connections/:id/schemas", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const connection = await storage.getConnection(id);
+      if (!connection) {
+        return res.status(404).json({ error: "Connection not found" });
+      }
+      
+      if (connection.type !== 'postgresql') {
+        return res.status(400).json({ error: "Schema discovery only supported for PostgreSQL connections" });
+      }
+
+      const config = connection.config as any;
+      const connected = await postgresAnalyzer.connect(config);
+      if (!connected) {
+        return res.status(500).json({ error: "Failed to connect to PostgreSQL" });
+      }
+
+      try {
+        const schemas = await postgresAnalyzer.getSchemas();
+        res.json({ schemas });
+      } finally {
+        // Always disconnect to prevent connection leaks
+        await postgresAnalyzer.disconnect();
+      }
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch schemas" });
+    }
+  });
+
   // Schema analysis routes
   app.post("/api/databases/:id/analyze-schema", async (req, res) => {
     try {

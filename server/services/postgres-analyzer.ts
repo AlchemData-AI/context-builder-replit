@@ -109,30 +109,7 @@ export class PostgresAnalyzer {
       ORDER BY row_count DESC NULLS LAST
     `;
 
-    console.log(`🔍 PostgreSQL getTables: Querying schema '${schemaName}'`);
     const result = await this.pool.query(query, [schemaName]);
-    console.log(`🔍 PostgreSQL getTables: Query returned ${result.rows.length} rows`);
-    
-    if (result.rows.length === 0) {
-      // Let's check what schemas exist
-      const schemaCheck = await this.pool.query(`
-        SELECT schema_name 
-        FROM information_schema.schemata 
-        WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
-        ORDER BY schema_name
-      `);
-      console.log(`🔍 Available schemas:`, schemaCheck.rows.map(r => r.schema_name));
-      
-      // Let's also check if there are any tables at all
-      const tableCheck = await this.pool.query(`
-        SELECT table_schema, table_name 
-        FROM information_schema.tables 
-        WHERE table_type = 'BASE TABLE' 
-        AND table_schema NOT IN ('information_schema', 'pg_catalog')
-        LIMIT 10
-      `);
-      console.log(`🔍 All available tables:`, tableCheck.rows);
-    }
     
     return result.rows.map(row => ({
       tableName: row.table_name,
