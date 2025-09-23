@@ -547,20 +547,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             };
           });
           
-          // Use combined Gemini service method (to be implemented)
-          // const contextAndQuestions = await geminiService.generateContextAndQuestions(
-          //   table.name,
-          //   schema,
-          //   sampleData,
-          //   columnData,
-          //   statisticalResults
-          // );
-          
-          // Temporary placeholder until method is implemented
-          const contextAndQuestions = {
-            table: null,
-            columns: []
-          };
+          // Use combined Gemini service method
+          const contextAndQuestions = await geminiService.generateContextAndQuestions(
+            table.name,
+            schema,
+            sampleData,
+            columnData,
+            statisticalResults
+          );
           
           // Store AI descriptions for table and columns
           if (contextAndQuestions.table) {

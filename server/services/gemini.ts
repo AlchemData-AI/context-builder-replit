@@ -342,6 +342,166 @@ ${truncatedStats}`;
       throw new Error(`Failed to generate SME questions: ${error}`);
     }
   }
+
+  async generateContextAndQuestions(
+    tableName: string,
+    schema: string,
+    sampleData: any[],
+    columnData: Array<{
+      name: string;
+      dataType: string;
+      sampleValues: any[];
+      cardinality?: number;
+      nullPercentage?: number;
+      distinctValues?: any[];
+    }>,
+    statisticalAnalysis: any
+  ): Promise<{
+    table: {
+      table_name: string;
+      description: string;
+      business_purpose: string;
+      data_characteristics: string;
+    } | null;
+    columns: Array<{
+      column_name: string;
+      hypothesis: string;
+      questions: Array<{
+        question_text: string;
+        question_type: "yes_no" | "multiple_choice" | "free_text_definitions";
+        options?: string[];
+        priority: "high" | "medium" | "low";
+      }>;
+    }>;
+  }> {
+    const truncatedSample = this.truncateText(JSON.stringify(sampleData, null, 2), 2000);
+    const truncatedStats = this.truncateText(JSON.stringify(statisticalAnalysis, null, 2), 1000);
+
+    const systemPrompt = `You are an expert Data Analyst conducting a comprehensive analysis of a database table. Your task is twofold:
+
+1. **Generate AI Context**: Provide table-level business description and column-level hypotheses about the data's purpose and meaning.
+2. **Generate SME Questions**: Create targeted questions for a Subject Matter Expert to validate your hypotheses and gather additional context.
+
+**Your Rules of Engagement:**
+1. For the table overall, provide a clear business description, purpose, and data characteristics.
+2. For each column, form a preliminary hypothesis about its purpose and business meaning.
+3. For columns with low cardinality (<=100 unique values), use the provided distinct values to inform your hypothesis.
+4. Generate 1-3 targeted questions per column to validate your hypotheses, especially for:
+   - Categorical columns with enum-like values
+   - Columns that appear to be identifiers or foreign keys  
+   - Columns with complex business logic (dates, monetary values, status codes)
+5. Questions should be actionable: yes/no, multiple-choice, or requests for definitions.
+6. Focus on understanding business context, not just technical details.
+7. Your output MUST be valid JSON with no additional text.`;
+
+    const prompt = `**Table Analysis Request:**
+Table: ${tableName}
+
+**Schema:**
+${schema}
+
+**Sample Data (${sampleData.length} rows):**
+${truncatedSample}
+
+**Statistical Analysis:**
+${truncatedStats}
+
+**Column Details with Enum Values:**
+${JSON.stringify(columnData.map(col => ({
+  name: col.name,
+  dataType: col.dataType,
+  cardinality: col.cardinality,
+  nullPercentage: col.nullPercentage,
+  sampleValues: col.sampleValues.slice(0, 10),
+  distinctValues: col.distinctValues // Only present for low cardinality columns
+})), null, 2)}`;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-pro",
+        config: {
+          systemInstruction: systemPrompt,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "object",
+            properties: {
+              table: {
+                type: "object",
+                properties: {
+                  table_name: { type: "string" },
+                  description: { type: "string" },
+                  business_purpose: { type: "string" },
+                  data_characteristics: { type: "string" }
+                },
+                required: ["table_name", "description", "business_purpose", "data_characteristics"]
+              },
+              columns: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    column_name: { type: "string" },
+                    hypothesis: { type: "string" },
+                    questions: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          question_text: { type: "string" },
+                          question_type: { 
+                            type: "string",
+                            enum: ["yes_no", "multiple_choice", "free_text_definitions"]
+                          },
+                          options: {
+                            type: "array",
+                            items: { type: "string" }
+                          },
+                          priority: { 
+                            type: "string",
+                            enum: ["high", "medium", "low"]
+                          }
+                        },
+                        required: ["question_text", "question_type", "priority"]
+                      }
+                    }
+                  },
+                  required: ["column_name", "hypothesis", "questions"]
+                }
+              }
+            },
+            required: ["table", "columns"]
+          }
+        },
+        contents: prompt
+      });
+
+      const result = JSON.parse(response.text || "{}");
+      return result;
+    } catch (error: any) {
+      // Handle quota exhaustion gracefully
+      if (error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('quota') || error?.message?.includes('429')) {
+        console.warn(`Gemini API quota exhausted for table ${tableName}. Returning fallback response.`);
+        return {
+          table: {
+            table_name: tableName,
+            description: `Table containing ${tableName} data - AI description unavailable due to quota limits`,
+            business_purpose: "Business context unavailable - requires AI API access",
+            data_characteristics: "Data patterns unavailable - requires AI analysis"
+          },
+          columns: columnData.map(col => ({
+            column_name: col.name,
+            hypothesis: `${col.dataType} column - AI hypothesis unavailable due to quota limits`,
+            questions: [{
+              question_text: `What is the business purpose of the ${col.name} column?`,
+              question_type: "free_text_definitions" as const,
+              priority: "medium" as const
+            }]
+          }))
+        };
+      }
+      throw new Error(`Failed to generate context and questions: ${error}`);
+    }
+  }
 }
 
 export const geminiService = new GeminiService();
