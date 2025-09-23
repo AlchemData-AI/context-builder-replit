@@ -109,13 +109,11 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
       return response.json();
     },
     onSuccess: (data) => {
-      console.log('Upload success response:', data);
       let description = data.message;
       
       // Add CSV processing results to the toast  
       if (data.csvProcessing) {
         description += ` Processed ${data.csvProcessing.processed} rows and updated ${data.csvProcessing.updated} questions.`;
-        console.log('CSV processing results:', data.csvProcessing);
       }
       
       // Add knowledge graph build results to the toast
@@ -144,7 +142,6 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
         }
       }
       
-      console.log('About to show toast with description:', description);
       toast({
         title: "Upload Successful",
         description,
@@ -169,7 +166,6 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
       }
     },
     onError: (error: Error) => {
-      console.error('Upload error:', error);
       toast({
         title: "Upload Failed",
         description: error.message,
@@ -331,38 +327,22 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
         >
           {selectedFile ? (
             <div className="space-y-2">
-              <FileText className="h-8 w-8 mx-auto text-green-600" />
+              <CheckCircle className="h-8 w-8 mx-auto text-green-600" />
               <div className="font-medium">{selectedFile.name}</div>
               <div className="text-sm text-muted-foreground">
-                {formatFileSize(selectedFile.size)}
+                {formatFileSize(selectedFile.size)} • Ready for processing
               </div>
-              <div className="flex justify-center gap-2 mt-3">
-                <Button
-                  onClick={handleUpload}
-                  disabled={uploadMutation.isPending}
-                  data-testid="button-upload-csv"
-                >
-                  {uploadMutation.isPending ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                      Uploading...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle className="h-4 w-4 mr-2" />
-                      Upload CSV
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleClearFile}
-                  disabled={uploadMutation.isPending}
-                  data-testid="button-clear-file"
-                >
-                  Clear
-                </Button>
-              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleClearFile}
+                disabled={uploadMutation.isPending}
+                data-testid="button-clear-file"
+                className="mt-2"
+              >
+                <X className="h-4 w-4 mr-1" />
+                Remove File
+              </Button>
             </div>
           ) : (
             <div className="space-y-2">
@@ -550,6 +530,38 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
             Define agent personas to represent different analytical roles and perspectives for your database.
           </p>
         </div>
+
+        {/* Submit Button */}
+        {selectedFile && (
+          <div className="border-t pt-4">
+            <Button
+              onClick={handleUpload}
+              disabled={uploadMutation.isPending}
+              className="w-full"
+              size="lg"
+              data-testid="button-process-csv"
+            >
+              {uploadMutation.isPending ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Processing CSV...
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Process CSV & Update Questions
+                </>
+              )}
+            </Button>
+            
+            {(buildKnowledgeGraph || definePersonas) && (
+              <p className="text-xs text-muted-foreground text-center mt-2">
+                {buildKnowledgeGraph && "Knowledge graph will be built. "}
+                {definePersonas && `${personas.length} persona(s) will be created.`}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Info Alert */}
         <Alert>
