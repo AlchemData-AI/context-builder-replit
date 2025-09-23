@@ -121,8 +121,8 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
         connectionConfig = {
           uri: neo4jConfig.uri,
           username: neo4jConfig.username,
-          password: neo4jConfig.password,
-          database: 'neo4j'
+          password: neo4jConfig.password
+          // No database specified - let Neo4j use its default database
         };
         break;
     }
@@ -424,7 +424,7 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
             {getStatusBadge(getConnectionByType('neo4j')?.status)}
             
             <div className="text-xs text-muted-foreground">
-              <p>Database: alchemdata_mvp</p>
+              <p>Database: Default (auto-detected)</p>
               <p>Namespace: /context_builder</p>
             </div>
             
