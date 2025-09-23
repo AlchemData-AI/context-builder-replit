@@ -345,7 +345,7 @@ export class Neo4jService {
       `, { namespace });
 
       const nodes = new Map();
-      const relationships = [];
+      const relationships: any[] = [];
 
       result.records.forEach(record => {
         const n = record.get('n');
