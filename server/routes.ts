@@ -332,7 +332,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // AI context generation routes
+  // Combined AI context generation and SME question generation
   app.post("/api/databases/:id/generate-context", async (req, res) => {
     try {
       const { id } = req.params;
@@ -351,12 +351,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get selected tables
       const tables = await storage.getSelectedTables(id);
       const results = [];
+      let totalQuestionsGenerated = 0;
+      
+      // Each table has 2 steps: context generation (50%) + SME questions (50%)
+      const totalSteps = tables.length * 2;
+      let currentStep = 0;
 
       for (let i = 0; i < tables.length; i++) {
         const table = tables[i];
         
         try {
-          // Get sample data and columns
+          // Step 1: Generate AI context (table + column descriptions)
           const sampleData = await schemaAnalyzer.getSampleData(table.id);
           const columns = await storage.getColumnsByTableId(table.id);
           
@@ -375,28 +380,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           const columnDescs = await geminiService.generateColumnDescriptions(table.name, columnData);
           
+          currentStep++;
+          let progress = Math.round((currentStep / totalSteps) * 80); // Keep 20% for final wrap-up
+          await storage.updateAnalysisJob(job.id, { progress });
+          
+          // Step 2: Generate SME questions for this table
+          let questionsGenerated = 0;
+          try {
+            const interviewData = await smeInterviewService.generateQuestionsForTable(table.id);
+            questionsGenerated = interviewData.questions.length;
+            totalQuestionsGenerated += questionsGenerated;
+          } catch (error) {
+            console.error(`Failed to generate SME questions for table ${table.name}:`, error);
+          }
+          
+          currentStep++;
+          progress = Math.round((currentStep / totalSteps) * 80);
+          await storage.updateAnalysisJob(job.id, { progress });
+          
           results.push({
             table: tableDesc,
-            columns: columnDescs
+            columns: columnDescs,
+            sme_questions_generated: questionsGenerated
           });
-          
-          const progress = Math.round(((i + 1) / tables.length) * 100);
-          await storage.updateAnalysisJob(job.id, { progress });
           
         } catch (error) {
           console.error(`Failed to generate context for table ${table.name}:`, error);
+          currentStep += 2; // Skip both steps for this table
         }
       }
+
+      // Generate relationship ambiguity questions
+      try {
+        const ambiguityQuestions = await smeInterviewService.generateAmbiguityQuestions(id);
+        totalQuestionsGenerated += ambiguityQuestions.length;
+      } catch (error) {
+        console.error('Failed to generate ambiguity questions:', error);
+      }
+
+      const finalResult = {
+        ai_context: results,
+        sme_questions_generated: totalQuestionsGenerated,
+        tables_processed: tables.length,
+        summary: `Generated AI descriptions for ${tables.length} tables and ${totalQuestionsGenerated} SME questions for validation`
+      };
 
       await storage.updateAnalysisJob(job.id, {
         status: "completed",
         progress: 100,
-        result: JSON.stringify(results),
+        result: JSON.stringify(finalResult),
         completedAt: new Date()
       });
 
       res.json(job);
     } catch (error) {
+      console.error('Context generation error:', error);
       res.status(500).json({ error: error instanceof Error ? error.message : "Context generation failed" });
     }
   });
