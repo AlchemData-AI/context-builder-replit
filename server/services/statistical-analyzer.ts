@@ -75,7 +75,7 @@ export class StatisticalAnalyzer {
           });
 
           // Categorize columns
-          if (analysis.cardinality <= 50) {
+          if (analysis.cardinality <= 100) {
             lowCardinalityColumns.push({
               ...column,
               cardinality: analysis.cardinality,
@@ -178,14 +178,14 @@ export class StatisticalAnalyzer {
       distinctValues = await postgresAnalyzer.getDistinctValues(
         table.name, 
         column.name, 
-        50, 
+        100, 
         table.schema
       );
       
       if (cardinality <= 10) {
         patterns.push('Low cardinality - likely categorical');
         recommendations.push('Consider creating enum values for knowledge graph');
-      } else if (cardinality <= 50) {
+      } else if (cardinality <= 100) {
         patterns.push('Medium cardinality - potential categorical');
         recommendations.push('Review distinct values for categorization');
       }
@@ -297,7 +297,7 @@ export class StatisticalAnalyzer {
         if (column.cardinality !== null) {
           analyzedColumns++;
           
-          if (column.cardinality <= 50) {
+          if (column.cardinality <= 100) {
             lowCardinalityColumns++;
           }
           

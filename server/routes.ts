@@ -552,7 +552,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })),
         statistical_analysis: {
           low_cardinality_columns: allTableData.flatMap(t => 
-            t.columns.filter(c => c.cardinality && c.cardinality < 50)
+            t.columns.filter(c => c.cardinality && c.cardinality <= 100)
               .map(c => ({ table: t.name, column: c.name, cardinality: c.cardinality }))
           ),
           high_null_columns: allTableData.flatMap(t => 
@@ -626,7 +626,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // Statistical insights
         if (exportData.statistical_analysis.low_cardinality_columns.length > 0) {
-          csvOutput += 'LOW CARDINALITY COLUMNS (< 50 unique values)\n';
+          csvOutput += 'LOW CARDINALITY COLUMNS (<= 100 unique values)\n';
           csvOutput += 'Table,Column,Cardinality\n';
           exportData.statistical_analysis.low_cardinality_columns.forEach(item => {
             csvOutput += `${escapeCSV(item.table)},${escapeCSV(item.column)},${escapeCSV(item.cardinality)}\n`;
@@ -882,7 +882,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               });
               
               // Create Value nodes for low-cardinality columns
-              if (column.cardinality && column.cardinality <= 50 && column.distinctValues) {
+              if (column.cardinality && column.cardinality <= 100 && column.distinctValues) {
                 try {
                   const values = JSON.parse(String(column.distinctValues));
                   for (const value of values) {

@@ -231,11 +231,11 @@ export class SchemaAnalyzer {
       }
 
       // Get distinct values for low cardinality columns
-      if (cardinality <= 50) {
+      if (cardinality <= 100) {
         distinctValues = await postgresAnalyzer.getDistinctValues(
           table.name, 
           column.name, 
-          50, 
+          100, 
           table.schema
         );
       }

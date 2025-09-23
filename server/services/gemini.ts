@@ -143,7 +143,7 @@ For each column, generate a JSON object with:
   "description": "Technical description of the column",
   "business_meaning": "What this column means in business terms",
   "data_patterns": "Patterns observed in the data",
-  "enum_values": ["value1", "value2"] // Only if cardinality < 50
+  "enum_values": ["value1", "value2"] // Only if cardinality <= 100
 }
 
 Return an array of these objects.`;

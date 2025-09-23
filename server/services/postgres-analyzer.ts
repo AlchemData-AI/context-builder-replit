@@ -276,7 +276,7 @@ export class PostgresAnalyzer {
   async getDistinctValues(
     tableName: string, 
     columnName: string, 
-    limit: number = 50,
+    limit: number = 100,
     schemaName: string = 'public'
   ): Promise<any[]> {
     if (!this.pool) throw new Error('Not connected to database');

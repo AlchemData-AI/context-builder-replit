@@ -58,7 +58,7 @@ Preferred communication style: Simple, everyday language.
 
 ## Knowledge Graph Design
 - **Hierarchy**: Four-level structure (Agent Personas → Tables → Columns → Values)
-- **Cardinality-based Storage**: Low-cardinality columns (<50 values) expanded to value nodes, high-cardinality columns (>5000 values) stored as metadata only
+- **Cardinality-based Storage**: Low-cardinality columns (<=100 values) expanded to value nodes, high-cardinality columns (>5000 values) stored as metadata only
 - **Relationship Mapping**: Foreign key relationships plus AI-suggested semantic relationships
 - **Multi-layered Context**: System metadata, AI-generated descriptions, and human-validated business logic
 
