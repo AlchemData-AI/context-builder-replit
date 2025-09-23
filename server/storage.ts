@@ -1,11 +1,11 @@
 import { 
   connections, databases, tables, columns, foreignKeys, 
-  agentPersonas, personaTables, smeQuestions, analysisJobs, contextItems, users,
+  agentPersonas, personaTables, smeQuestions, analysisJobs, contextItems, enumValues, users,
   type Connection, type InsertConnection, type Database, type InsertDatabase,
   type Table, type InsertTable, type Column, type ForeignKey,
   type AgentPersona, type InsertAgentPersona, type SmeQuestion, type InsertSmeQuestion,
   type AnalysisJob, type InsertAnalysisJob, type ContextItem, type InsertContextItem,
-  type User, type InsertUser
+  type EnumValue, type InsertEnumValue, type User, type InsertUser
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc } from "drizzle-orm";
@@ -37,6 +37,7 @@ export interface IStorage {
   // Column methods
   createColumn(column: Omit<Column, 'id' | 'createdAt'>): Promise<Column>;
   getColumnsByTableId(tableId: string): Promise<Column[]>;
+  getColumnById(columnId: string): Promise<Column | null>;
   updateColumnStats(columnId: string, stats: Partial<Column>): Promise<void>;
 
   // Foreign key methods
@@ -63,6 +64,12 @@ export interface IStorage {
   upsertContextForTable(contextItem: InsertContextItem): Promise<ContextItem>;
   getContextByTableId(tableId: string): Promise<ContextItem | undefined>;
   getContextsByDatabaseId(databaseId: string): Promise<ContextItem[]>;
+  
+  // Enum value methods
+  createEnumValue(enumValue: InsertEnumValue): Promise<EnumValue>;
+  getEnumValuesByColumnId(columnId: string): Promise<EnumValue[]>;
+  getEnumValuesByDatabaseId(databaseId: string): Promise<EnumValue[]>;
+  updateEnumValueContext(enumValueId: string, aiContext: string, aiHypothesis: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -201,6 +208,14 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(columns)
       .where(eq(columns.tableId, tableId));
+  }
+
+  async getColumnById(columnId: string): Promise<Column | null> {
+    const [column] = await db
+      .select()
+      .from(columns)
+      .where(eq(columns.id, columnId));
+    return column || null;
   }
 
   async updateColumnStats(columnId: string, stats: Partial<Column>): Promise<void> {
@@ -356,6 +371,53 @@ export class DatabaseStorage implements IStorage {
       .from(contextItems)
       .where(eq(contextItems.databaseId, databaseId))
       .orderBy(desc(contextItems.createdAt));
+  }
+
+  async createEnumValue(enumValue: InsertEnumValue): Promise<EnumValue> {
+    const [result] = await db
+      .insert(enumValues)
+      .values(enumValue)
+      .returning();
+    return result;
+  }
+
+  async getEnumValuesByColumnId(columnId: string): Promise<EnumValue[]> {
+    return await db
+      .select()
+      .from(enumValues)
+      .where(eq(enumValues.columnId, columnId))
+      .orderBy(desc(enumValues.frequency));
+  }
+
+  async getEnumValuesByDatabaseId(databaseId: string): Promise<EnumValue[]> {
+    return await db
+      .select({
+        id: enumValues.id,
+        columnId: enumValues.columnId,
+        value: enumValues.value,
+        frequency: enumValues.frequency,
+        aiContext: enumValues.aiContext,
+        aiHypothesis: enumValues.aiHypothesis,
+        smeValidated: enumValues.smeValidated,
+        createdAt: enumValues.createdAt,
+        updatedAt: enumValues.updatedAt
+      })
+      .from(enumValues)
+      .innerJoin(columns, eq(enumValues.columnId, columns.id))
+      .innerJoin(tables, eq(columns.tableId, tables.id))
+      .where(eq(tables.databaseId, databaseId))
+      .orderBy(desc(enumValues.frequency));
+  }
+
+  async updateEnumValueContext(enumValueId: string, aiContext: string, aiHypothesis: string): Promise<void> {
+    await db
+      .update(enumValues)
+      .set({ 
+        aiContext,
+        aiHypothesis,
+        updatedAt: new Date()
+      })
+      .where(eq(enumValues.id, enumValueId));
   }
 
   async deduplicateTablesForDatabase(databaseId: string): Promise<number> {

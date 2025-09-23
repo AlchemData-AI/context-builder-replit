@@ -89,7 +89,8 @@ export const smeQuestions = pgTable("sme_questions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   tableId: varchar("table_id"),
   columnId: varchar("column_id"),
-  questionType: text("question_type").notNull(), // 'table', 'column', 'relationship', 'ambiguity'
+  enumValueId: varchar("enum_value_id"), // New field for enum value questions
+  questionType: text("question_type").notNull(), // 'table', 'column', 'relationship', 'ambiguity', 'enum_value'
   questionText: text("question_text").notNull(),
   options: jsonb("options"),
   response: text("response"),
@@ -130,6 +131,18 @@ export const contextItems = pgTable("context_items", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const enumValues = pgTable("enum_values", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  columnId: varchar("column_id").notNull(),
+  value: text("value").notNull(),
+  frequency: integer("frequency"),
+  aiContext: text("ai_context"),
+  aiHypothesis: text("ai_hypothesis"), 
+  smeValidated: boolean("sme_validated").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertConnectionSchema = createInsertSchema(connections).pick({
   name: true,
@@ -163,10 +176,19 @@ export const insertAgentPersonaSchema = createInsertSchema(agentPersonas).pick({
 export const insertSmeQuestionSchema = createInsertSchema(smeQuestions).pick({
   tableId: true,
   columnId: true,
+  enumValueId: true,
   questionType: true,
   questionText: true,
   options: true,
   priority: true,
+});
+
+export const insertEnumValueSchema = createInsertSchema(enumValues).pick({
+  columnId: true,
+  value: true,
+  frequency: true,
+  aiContext: true,
+  aiHypothesis: true,
 });
 
 export const insertAnalysisJobSchema = createInsertSchema(analysisJobs).pick({
@@ -212,6 +234,8 @@ export type AnalysisJob = typeof analysisJobs.$inferSelect;
 export type InsertAnalysisJob = z.infer<typeof insertAnalysisJobSchema>;
 export type ContextItem = typeof contextItems.$inferSelect;
 export type InsertContextItem = z.infer<typeof insertContextItemSchema>;
+export type EnumValue = typeof enumValues.$inferSelect;
+export type InsertEnumValue = z.infer<typeof insertEnumValueSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 

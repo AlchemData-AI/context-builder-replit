@@ -502,6 +502,78 @@ ${JSON.stringify(columnData.map(col => ({
       throw new Error(`Failed to generate context and questions: ${error}`);
     }
   }
+  async generateEnumValueContext(
+    tableName: string,
+    columnName: string,
+    columnDataType: string,
+    enumValues: string[],
+    columnDescription?: string
+  ): Promise<Array<{value: string, context: string, hypothesis: string}>> {
+    const prompt = `Analyze these enum values from a database column and provide business context and hypotheses for each value.
+
+Table: ${tableName}
+Column: ${columnName}
+Data Type: ${columnDataType}
+Column Description: ${columnDescription || 'No description available'}
+Enum Values: ${JSON.stringify(enumValues)}
+
+For each enum value, provide:
+1. Context: What this value likely represents in business terms
+2. Hypothesis: Your hypothesis about when/why this value would be used
+
+Generate a JSON response with this structure:
+{
+  "enum_contexts": [
+    {
+      "value": "exact_enum_value",
+      "context": "Business context explaining what this value represents",
+      "hypothesis": "Hypothesis about when and why this value is used"
+    }
+  ]
+}`;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "object",
+            properties: {
+              enum_contexts: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    value: { type: "string" },
+                    context: { type: "string" },
+                    hypothesis: { type: "string" }
+                  },
+                  required: ["value", "context", "hypothesis"]
+                }
+              }
+            },
+            required: ["enum_contexts"]
+          }
+        },
+        contents: prompt
+      });
+
+      const result = JSON.parse(response.text || "{}");
+      return result.enum_contexts || [];
+    } catch (error: any) {
+      // Handle quota exhaustion gracefully
+      if (error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('quota') || error?.message?.includes('429')) {
+        console.warn(`Gemini API quota exhausted for enum values in ${tableName}.${columnName}. Returning fallback context.`);
+        return enumValues.map(value => ({
+          value,
+          context: `Enum value '${value}' - AI context unavailable due to quota limits`,
+          hypothesis: "Business hypothesis unavailable - requires AI API access"
+        }));
+      }
+      throw new Error(`Failed to generate enum value context: ${error}`);
+    }
+  }
 }
 
 export const geminiService = new GeminiService();

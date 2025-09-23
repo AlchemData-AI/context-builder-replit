@@ -941,6 +941,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
 
+    // Process enum values for low cardinality columns
+    console.log(`[Job ${jobId}] Processing enum values for table ${table.name}...`);
+    const enumColumnsProcessed = await processEnumValuesForTable(table, columns, storage, geminiService, jobId);
+    console.log(`[Job ${jobId}] Processed enum values for ${enumColumnsProcessed} columns in table ${table.name}`);
+
     // Store context for this table using new ContextItem storage
     await storage.upsertContextForTable({
       databaseId: table.databaseId,
@@ -950,9 +955,117 @@ export async function registerRoutes(app: Express): Promise<Server> {
       questionsGenerated: totalQuestionsGenerated
     });
 
-    console.log(`[Job ${jobId}] Stored context for table ${table.name}: ${totalQuestionsGenerated} questions generated`);
+    console.log(`[Job ${jobId}] Stored context for table ${table.name}: ${totalQuestionsGenerated} questions generated, ${enumColumnsProcessed} enum columns processed`);
     
     return totalQuestionsGenerated;
+  }
+
+  // Helper function to process enum values for a table
+  async function processEnumValuesForTable(
+    table: any,
+    columns: any[],
+    storage: any,
+    geminiService: any,
+    jobId: string
+  ): Promise<number> {
+    let enumColumnsProcessed = 0;
+
+    // Helper function to safely parse JSON arrays
+    const safeParseArray = (value: any): any[] => {
+      if (!value) return [];
+      if (Array.isArray(value)) return value;
+      if (typeof value === 'string') {
+        if (value.trim() === '') return [];
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      }
+      return [];
+    };
+
+    // Find enum-like columns (low cardinality with distinct values)
+    const enumColumns = columns.filter(c => 
+      c.cardinality != null && 
+      c.cardinality >= 2 && 
+      c.cardinality <= 20 && // Consider columns with 2-20 distinct values as enum-like
+      c.distinctValues != null
+    );
+
+    console.log(`[Job ${jobId}] Found ${enumColumns.length} enum-like columns in table ${table.name}`);
+
+    for (const column of enumColumns) {
+      try {
+        let distinctValues = safeParseArray(column.distinctValues);
+        
+        if (distinctValues.length === 0) {
+          console.log(`[Job ${jobId}] No distinct values found for column ${column.name}, skipping`);
+          continue;
+        }
+
+        console.log(`[Job ${jobId}] Processing ${distinctValues.length} enum values for column ${column.name}`);
+
+        // Check existing enum values to create only missing ones
+        const existingEnumValues = await storage.getEnumValuesByColumnId(column.id);
+        const existingValues = new Set(existingEnumValues.map(ev => ev.value));
+        const newValues = distinctValues.filter(v => !existingValues.has(String(v)));
+        
+        if (newValues.length === 0) {
+          console.log(`[Job ${jobId}] All enum values already exist for column ${column.name}, skipping`);
+          continue;
+        }
+        
+        console.log(`[Job ${jobId}] Found ${newValues.length} new enum values to process for column ${column.name} (${existingEnumValues.length} already exist)`);
+        distinctValues = newValues; // Process only new values
+
+        // Generate AI context for enum values
+        const enumContexts = await geminiService.generateEnumValueContext(
+          table.name,
+          column.name,
+          column.dataType,
+          distinctValues.map(v => String(v)),
+          column.aiDescription
+        );
+
+        console.log(`[Job ${jobId}] Generated context for ${enumContexts.length} enum values in column ${column.name}`);
+
+        // Store each enum value with its context
+        for (const enumContext of enumContexts) {
+          try {
+            const createdEnumValue = await storage.createEnumValue({
+              columnId: column.id,
+              value: enumContext.value,
+              frequency: null, // We don't have frequency data from distinctValues
+              aiContext: enumContext.context,
+              aiHypothesis: enumContext.hypothesis
+            });
+
+            // Generate SME questions for this enum value
+            await storage.createSmeQuestion({
+              tableId: table.id,
+              columnId: column.id,
+              enumValueId: createdEnumValue.id, // Link to the created enum value
+              questionType: 'enum_value',
+              questionText: `In column '${column.name}', we found the value '${enumContext.value}'. AI suggests: ${enumContext.hypothesis}. Do you agree with this interpretation, or would you provide a different business definition?`,
+              priority: 'medium'
+            });
+            
+          } catch (enumError) {
+            console.error(`[Job ${jobId}] Failed to store enum value ${enumContext.value} for column ${column.name}:`, enumError);
+          }
+        }
+
+        enumColumnsProcessed++;
+        console.log(`[Job ${jobId}] Completed processing enum values for column ${column.name}`);
+
+      } catch (columnError) {
+        console.error(`[Job ${jobId}] Failed to process enum values for column ${column.name}:`, columnError);
+      }
+    }
+
+    return enumColumnsProcessed;
   }
 
   // Comprehensive data export endpoint with multiple formats
@@ -1298,6 +1411,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // If no questions, create one row with empty question fields
             csvOutput += `${safeCSV('COLUMN_DETAILS')},${safeCSV(table.name)},${safeCSV(column.name)},${safeCSV(column.dataType)},${safeCSV(column.isNullable)},${safeCSV(column.isUnique)},${safeCSV(column.cardinality)},${safeCSV(column.nullPercentage)},${safeCSV(column.minValue)},${safeCSV(column.maxValue)},${safeCSV(sampleValues)},${safeCSV(aiHypothesis)},${safeCSV('')},${safeCSV('')},${safeCSV('')},${safeCSV('')},${safeCSV('No')},${safeCSV('')},${safeCSV(fkRole)},${safeCSV(fkTarget)},${safeCSV('')}\n`;
           }
+        }
+      }
+      
+      // Add blank line between sections
+      csvOutput += '\n';
+      
+      // SECTION 3: ENUM CONTEXT
+      csvOutput += 'Section,Table,Column,EnumValue,AI_Context,AI_Hypothesis,QuestionText,QuestionType,Options,Response,IsAnswered,Priority,Notes\n';
+      
+      // Get all enum values for selected tables
+      const allEnumValues = await storage.getEnumValuesByDatabaseId(id);
+      
+      // Group enum questions by enum value ID
+      const enumQuestionsByValueId = new Map();
+      allQuestions.filter(q => q.questionType === 'enum_value' && q.enumValueId).forEach(q => {
+        if (!enumQuestionsByValueId.has(q.enumValueId)) {
+          enumQuestionsByValueId.set(q.enumValueId, []);
+        }
+        enumQuestionsByValueId.get(q.enumValueId).push(q);
+      });
+      
+      for (const enumValue of allEnumValues) {
+        // Find the table and column names for this enum value
+        const column = await storage.getColumnById(enumValue.columnId);
+        if (!column) continue;
+        
+        const table = tables.find(t => t.id === column.tableId);
+        if (!table) continue;
+        
+        const enumQuestions = enumQuestionsByValueId.get(enumValue.id) || [];
+        
+        // If there are questions for this enum value, create one row per question
+        if (enumQuestions.length > 0) {
+          for (const question of enumQuestions) {
+            csvOutput += `${safeCSV('ENUM_CONTEXT')},${safeCSV(table.name)},${safeCSV(column.name)},${safeCSV(enumValue.value)},${safeCSV(enumValue.aiContext)},${safeCSV(enumValue.aiHypothesis)},${safeCSV(question.questionText)},${safeCSV(question.questionType)},${safeCSV(question.options)},${safeCSV(question.response)},${safeCSV(question.isAnswered ? 'Yes' : 'No')},${safeCSV(question.priority)},${safeCSV('')}\n`;
+          }
+        } else {
+          // If no questions, create one row with empty question fields
+          csvOutput += `${safeCSV('ENUM_CONTEXT')},${safeCSV(table.name)},${safeCSV(column.name)},${safeCSV(enumValue.value)},${safeCSV(enumValue.aiContext)},${safeCSV(enumValue.aiHypothesis)},${safeCSV('')},${safeCSV('')},${safeCSV('')},${safeCSV('')},${safeCSV('No')},${safeCSV('')},${safeCSV('')}\n`;
         }
       }
       
