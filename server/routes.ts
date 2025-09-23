@@ -491,15 +491,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No tables selected for analysis. Please select tables first." });
       }
       
+      const batchSize = parseInt(process.env.AI_CONTEXT_BATCH_SIZE || '1');
       const job = await storage.createAnalysisJob({
         databaseId: id,
-        type: "ai_context", // We'll use the same type for now
+        type: "ai_context",
         status: "running",
         progress: 0,
         result: null,
         error: null,
         startedAt: new Date(),
-        completedAt: null
+        completedAt: null,
+        totalUnits: tables.length,
+        completedUnits: 0,
+        batchSize: batchSize,
+        processedTableIds: [],
+        nextIndex: 0,
+        batchIndex: 0
       });
 
       // Send response immediately to avoid request timeout
@@ -527,7 +534,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Async function to process tables in background
+  // Batched async function to process tables in background with memory efficiency
   async function processTablesAsync(
     jobId: string, 
     tables: any[], 
@@ -536,127 +543,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     statisticalAnalyzer: any, 
     geminiService: any
   ) {
-    const results = [];
-
+    console.log(`[Job ${jobId}] Starting batched processing for ${tables.length} tables`);
+    
     try {
-      for (let i = 0; i < tables.length; i++) {
-        const table = tables[i];
-        
-        try {
-          // Get sample data and columns
-          const sampleData = await schemaAnalyzer.getSampleData(table.id);
-          const columns = await storage.getColumnsByTableId(table.id);
-          
-          // Get statistical analysis for richer context
-          const statisticalResults = await statisticalAnalyzer.analyzeTable(table.id);
-          
-          // Generate schema string
-          const schema = `CREATE TABLE ${table.schema}.${table.name} (\n${columns.map(c => `  ${c.name} ${c.dataType}`).join(',\n')}\n);`;
-          
-          // Helper function to safely parse JSON arrays
-          const safeParseArray = (value: any): any[] => {
-            if (!value) return [];
-            if (Array.isArray(value)) return value;
-            if (typeof value === 'string') {
-              if (value.trim() === '') return [];
-              try {
-                const parsed = JSON.parse(value);
-                return Array.isArray(parsed) ? parsed : [];
-              } catch {
-                return [];
-              }
-            }
-            return [];
-          };
-          
-          // Prepare column data with enhanced information including enum values
-          const columnData = columns.map(c => {
-            const distinctValues = safeParseArray(c.distinctValues);
-            return {
-              name: c.name,
-              dataType: c.dataType,
-              sampleValues: sampleData.map(row => row[c.name]).filter(v => v != null).slice(0, 10),
-              cardinality: c.cardinality ?? undefined,
-              nullPercentage: parseFloat(c.nullPercentage || '0'),
-              distinctValues: c.cardinality && c.cardinality <= 100 ? distinctValues : undefined
-            };
-          });
-          
-          // Use combined Gemini service method
-          console.log(`Generating context and questions for table: ${table.name}`);
-          const contextAndQuestions = await geminiService.generateContextAndQuestions(
-            table.name,
-            schema,
-            sampleData,
-            columnData,
-            statisticalResults
-          );
-          console.log(`Successfully generated context for table: ${table.name}, columns: ${contextAndQuestions.columns.length}`);
-          
-          // Store AI descriptions for table and columns
-          if (contextAndQuestions.table) {
-            // TODO: Store table description when we have table-level AI description field
-          }
-          
-          // Store column descriptions and SME questions
-          for (const columnResult of contextAndQuestions.columns || []) {
-            const column = columns.find(c => c.name === columnResult.column_name);
-            if (!column) continue;
+      // Get current job state to check if this is a resume operation
+      const job = await storage.getAnalysisJob(jobId);
+      if (!job) {
+        console.error(`[Job ${jobId}] Job not found - cannot process`);
+        return;
+      }
 
-            // Store column AI description
-            await storage.updateColumnStats(column.id, {
-              aiDescription: columnResult.hypothesis
+      // Get processed table IDs to support resumption
+      const processedTableIds = Array.isArray(job.processedTableIds) ? job.processedTableIds : [];
+      const startIndex = job.nextIndex || 0;
+      const batchSize = job.batchSize || 1;
+      
+      console.log(`[Job ${jobId}] Resuming from index ${startIndex}, batch size ${batchSize}, already processed ${processedTableIds.length} tables`);
+
+      // Process tables in batches starting from nextIndex
+      for (let batchStart = startIndex; batchStart < tables.length; batchStart += batchSize) {
+        const batchEnd = Math.min(batchStart + batchSize, tables.length);
+        const currentBatch = tables.slice(batchStart, batchEnd);
+        const currentBatchIndex = Math.floor(batchStart / batchSize);
+        
+        console.log(`[Job ${jobId}] Processing batch ${currentBatchIndex + 1}, tables ${batchStart + 1}-${batchEnd} of ${tables.length}`);
+
+        // Process each table in the current batch
+        for (let i = 0; i < currentBatch.length; i++) {
+          const table = currentBatch[i];
+          const tableIndex = batchStart + i;
+          
+          console.log(`[Job ${jobId}] Starting table ${tableIndex + 1}/${tables.length}: ${table.name} (ID: ${table.id})`);
+          
+          // Skip if already processed (for resume scenarios)
+          if (processedTableIds.includes(table.id)) {
+            console.log(`[Job ${jobId}] Skipping already processed table: ${table.name}`);
+            continue;
+          }
+
+          try {
+            console.log(`[Job ${jobId}] About to call processSingleTable for ${table.name}...`);
+            
+            // Process single table with memory-efficient approach
+            const questionsGenerated = await processSingleTable(
+              table, storage, schemaAnalyzer, statisticalAnalyzer, geminiService, jobId
+            );
+
+            console.log(`[Job ${jobId}] processSingleTable completed for ${table.name}, generated ${questionsGenerated} questions`);
+
+            // Update job state after each successful table (CRITICAL for persistence)
+            processedTableIds.push(table.id);
+            const completedUnits = processedTableIds.length;
+            const progress = Math.round((completedUnits / tables.length) * 100);
+
+            console.log(`[Job ${jobId}] About to update job state: completedUnits=${completedUnits}, nextIndex=${tableIndex + 1}`);
+
+            await storage.updateAnalysisJob(jobId, {
+              completedUnits,
+              progress,
+              processedTableIds: [...processedTableIds], // Create new array for JSON serialization
+              nextIndex: tableIndex + 1,
+              batchIndex: currentBatchIndex,
+              lastError: null // Clear any previous errors on success
             });
 
-            // Create SME questions for this column
-            for (const question of columnResult.questions || []) {
-              await storage.createSmeQuestion({
+            console.log(`[Job ${jobId}] Table ${table.name} completed. Progress: ${completedUnits}/${tables.length} (${progress}%)`);
+            console.log(`[Job ${jobId}] Job state updated: nextIndex=${tableIndex + 1}, completedUnits=${completedUnits}`);
+            console.log(`[Job ${jobId}] ProcessedTableIds now contains: ${JSON.stringify(processedTableIds)}`);
+
+          } catch (error) {
+            console.error(`[Job ${jobId}] Failed to process table ${table.name}:`, error);
+            
+            // Store failed table entry but continue processing (CRITICAL: don't abort loop)
+            try {
+              await storage.upsertContextForTable({
+                databaseId: job.databaseId,
                 tableId: table.id,
-                columnId: column.id,
-                questionType: question.question_type || 'column',
-                questionText: question.question_text,
-                options: question.options ? JSON.stringify(question.options) : null,
-                priority: question.priority || 'medium'
+                tableDesc: null,
+                columnDescs: null,
+                questionsGenerated: 0
               });
+            } catch (storeError) {
+              console.error(`[Job ${jobId}] Failed to store failed table context:`, storeError);
             }
 
-            // Add enum values question for low cardinality columns
-            if (columnResult.enum_values && columnResult.enum_values.length > 0) {
-              await storage.createSmeQuestion({
-                tableId: table.id,
-                columnId: column.id,
-                questionType: 'column',
-                questionText: `We found these distinct values in ${columnResult.column_name}: ${columnResult.enum_values.join(', ')}. Please define what each value means.`,
-                priority: 'high'
-              });
-            }
+            // CRITICAL: Still update job state to continue processing
+            processedTableIds.push(table.id); // Mark as processed even if failed
+            const completedUnits = processedTableIds.length;
+            const progress = Math.round((completedUnits / tables.length) * 100);
+
+            await storage.updateAnalysisJob(jobId, {
+              completedUnits,
+              progress,
+              processedTableIds: [...processedTableIds],
+              nextIndex: tableIndex + 1,
+              batchIndex: currentBatchIndex,
+              lastError: error instanceof Error ? error.message : "Unknown error"
+            });
+
+            console.log(`[Job ${jobId}] Table ${table.name} failed but job state updated to continue. Progress: ${completedUnits}/${tables.length} (${progress}%)`);
+            // Continue to next table instead of aborting entire job
           }
-          
-          results.push({
-            table: table.name,
-            context: contextAndQuestions.table,
-            columns: contextAndQuestions.columns,
-            questionsGenerated: contextAndQuestions.columns?.reduce((total: number, col: any) => total + (col.questions?.length || 0), 0) || 0
-          });
-          
-          const progress = Math.round(((i + 1) / tables.length) * 100);
-          await storage.updateAnalysisJob(jobId, { progress });
-          
-        } catch (error) {
-          console.error(`Failed to generate context and questions for table ${table.name}:`, error);
-          
-          // Add a failed result entry so the job can still complete
-          results.push({
-            table: table.name,
-            context: null,
-            columns: [],
-            questionsGenerated: 0,
-            error: error instanceof Error ? error.message : "Unknown error"
-          });
-          
-          // Update progress even on error so job doesn't get stuck
-          const progress = Math.round(((i + 1) / tables.length) * 100);
-          await storage.updateAnalysisJob(jobId, { progress });
+        }
+
+        // Small delay between batches to allow memory cleanup
+        if (batchEnd < tables.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
 
@@ -664,20 +656,135 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateAnalysisJob(jobId, {
         status: "completed",
         progress: 100,
-        result: JSON.stringify(results),
-        completedAt: new Date()
+        completedAt: new Date(),
+        result: JSON.stringify({ 
+          totalTables: tables.length, 
+          processedTables: processedTableIds.length,
+          completedAt: new Date().toISOString()
+        })
       });
 
-      console.log(`Job ${jobId} completed successfully with ${results.length} tables processed`);
+      console.log(`[Job ${jobId}] Completed successfully! Processed ${processedTableIds.length}/${tables.length} tables`);
       
     } catch (error) {
-      console.error(`Job ${jobId} failed with error:`, error);
+      console.error(`[Job ${jobId}] Critical failure:`, error);
       await storage.updateAnalysisJob(jobId, {
         status: "failed",
-        error: error instanceof Error ? error.message : "Unknown error occurred during processing",
+        error: error instanceof Error ? error.message : "Critical error during batch processing",
         completedAt: new Date()
       });
     }
+  }
+
+  // Helper function to process a single table efficiently
+  async function processSingleTable(
+    table: any,
+    storage: any,
+    schemaAnalyzer: any,
+    statisticalAnalyzer: any,
+    geminiService: any,
+    jobId: string
+  ): Promise<number> {
+    // Get sample data and columns
+    const sampleData = await schemaAnalyzer.getSampleData(table.id);
+    const columns = await storage.getColumnsByTableId(table.id);
+    
+    // Get statistical analysis for richer context
+    const statisticalResults = await statisticalAnalyzer.analyzeTable(table.id);
+    
+    // Generate schema string
+    const schema = `CREATE TABLE ${table.schema}.${table.name} (\n${columns.map(c => `  ${c.name} ${c.dataType}`).join(',\n')}\n);`;
+    
+    // Helper function to safely parse JSON arrays
+    const safeParseArray = (value: any): any[] => {
+      if (!value) return [];
+      if (Array.isArray(value)) return value;
+      if (typeof value === 'string') {
+        if (value.trim() === '') return [];
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      }
+      return [];
+    };
+    
+    // Prepare column data with enhanced information including enum values
+    const columnData = columns.map(c => {
+      const distinctValues = safeParseArray(c.distinctValues);
+      return {
+        name: c.name,
+        dataType: c.dataType,
+        sampleValues: sampleData.map(row => row[c.name]).filter(v => v != null).slice(0, 10),
+        cardinality: c.cardinality ?? undefined,
+        nullPercentage: parseFloat(c.nullPercentage || '0'),
+        distinctValues: c.cardinality && c.cardinality <= 100 ? distinctValues : undefined
+      };
+    });
+    
+    // Use combined Gemini service method
+    console.log(`[Job ${jobId}] Calling Gemini for table: ${table.name}`);
+    const contextAndQuestions = await geminiService.generateContextAndQuestions(
+      table.name,
+      schema,
+      sampleData,
+      columnData,
+      statisticalResults
+    );
+    console.log(`[Job ${jobId}] Gemini response for ${table.name}: ${contextAndQuestions.columns?.length || 0} columns processed`);
+    
+    let totalQuestionsGenerated = 0;
+
+    // Store column descriptions and SME questions
+    for (const columnResult of contextAndQuestions.columns || []) {
+      const column = columns.find(c => c.name === columnResult.column_name);
+      if (!column) continue;
+
+      // Store column AI description
+      await storage.updateColumnStats(column.id, {
+        aiDescription: columnResult.hypothesis
+      });
+
+      // Create SME questions for this column
+      for (const question of columnResult.questions || []) {
+        await storage.createSmeQuestion({
+          tableId: table.id,
+          columnId: column.id,
+          questionType: question.question_type || 'column',
+          questionText: question.question_text,
+          options: question.options ? JSON.stringify(question.options) : null,
+          priority: question.priority || 'medium'
+        });
+        totalQuestionsGenerated++;
+      }
+
+      // Add enum values question for low cardinality columns
+      if (columnResult.enum_values && columnResult.enum_values.length > 0) {
+        await storage.createSmeQuestion({
+          tableId: table.id,
+          columnId: column.id,
+          questionType: 'column',
+          questionText: `We found these distinct values in ${columnResult.column_name}: ${columnResult.enum_values.join(', ')}. Please define what each value means.`,
+          priority: 'high'
+        });
+        totalQuestionsGenerated++;
+      }
+    }
+
+    // Store context for this table using new ContextItem storage
+    await storage.upsertContextForTable({
+      databaseId: table.databaseId,
+      tableId: table.id,
+      tableDesc: contextAndQuestions.table || null,
+      columnDescs: contextAndQuestions.columns || null,
+      questionsGenerated: totalQuestionsGenerated
+    });
+
+    console.log(`[Job ${jobId}] Stored context for table ${table.name}: ${totalQuestionsGenerated} questions generated`);
+    
+    return totalQuestionsGenerated;
   }
 
   // Comprehensive data export endpoint with multiple formats

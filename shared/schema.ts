@@ -109,6 +109,25 @@ export const analysisJobs = pgTable("analysis_jobs", {
   startedAt: timestamp("started_at"),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow(),
+  // Batch processing fields
+  totalUnits: integer("total_units").default(0),
+  completedUnits: integer("completed_units").default(0),
+  batchSize: integer("batch_size").default(1),
+  processedTableIds: jsonb("processed_table_ids").default('[]'),
+  nextIndex: integer("next_index").default(0),
+  batchIndex: integer("batch_index").default(0),
+  lastError: text("last_error"),
+});
+
+export const contextItems = pgTable("context_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  databaseId: varchar("database_id").notNull(),
+  tableId: varchar("table_id").notNull(),
+  tableDesc: jsonb("table_desc"),
+  columnDescs: jsonb("column_descs"),
+  questionsGenerated: integer("questions_generated").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Insert schemas
@@ -159,6 +178,21 @@ export const insertAnalysisJobSchema = createInsertSchema(analysisJobs).pick({
   error: true,
   startedAt: true,
   completedAt: true,
+  totalUnits: true,
+  completedUnits: true,
+  batchSize: true,
+  processedTableIds: true,
+  nextIndex: true,
+  batchIndex: true,
+  lastError: true,
+});
+
+export const insertContextItemSchema = createInsertSchema(contextItems).pick({
+  databaseId: true,
+  tableId: true,
+  tableDesc: true,
+  columnDescs: true,
+  questionsGenerated: true,
 });
 
 // Types
@@ -176,6 +210,8 @@ export type SmeQuestion = typeof smeQuestions.$inferSelect;
 export type InsertSmeQuestion = z.infer<typeof insertSmeQuestionSchema>;
 export type AnalysisJob = typeof analysisJobs.$inferSelect;
 export type InsertAnalysisJob = z.infer<typeof insertAnalysisJobSchema>;
+export type ContextItem = typeof contextItems.$inferSelect;
+export type InsertContextItem = z.infer<typeof insertContextItemSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 

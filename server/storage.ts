@@ -1,10 +1,11 @@
 import { 
   connections, databases, tables, columns, foreignKeys, 
-  agentPersonas, personaTables, smeQuestions, analysisJobs,
+  agentPersonas, personaTables, smeQuestions, analysisJobs, contextItems, users,
   type Connection, type InsertConnection, type Database, type InsertDatabase,
   type Table, type InsertTable, type Column, type ForeignKey,
   type AgentPersona, type InsertAgentPersona, type SmeQuestion, type InsertSmeQuestion,
-  type AnalysisJob, type InsertAnalysisJob, type User, type InsertUser
+  type AnalysisJob, type InsertAnalysisJob, type ContextItem, type InsertContextItem,
+  type User, type InsertUser
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc } from "drizzle-orm";
@@ -56,25 +57,31 @@ export interface IStorage {
   createAnalysisJob(job: InsertAnalysisJob): Promise<AnalysisJob>;
   getAnalysisJobs(databaseId: string): Promise<AnalysisJob[]>;
   updateAnalysisJob(jobId: string, updates: Partial<AnalysisJob>): Promise<void>;
+  getAnalysisJob(jobId: string): Promise<AnalysisJob | undefined>;
+  
+  // Context item methods (for batched processing)
+  upsertContextForTable(contextItem: InsertContextItem): Promise<ContextItem>;
+  getContextByTableId(tableId: string): Promise<ContextItem | undefined>;
+  getContextsByDatabaseId(databaseId: string): Promise<ContextItem[]>;
 }
 
 export class DatabaseStorage implements IStorage {
   async getUser(id: string): Promise<User | undefined> {
-    const [user] = await db.select().from(connections).where(eq(connections.id, id));
+    const [user] = await db.select().from(users).where(eq(users.id, id));
     return user || undefined;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(connections).where(eq(connections.name, username));
+    const [user] = await db.select().from(users).where(eq(users.username, username));
     return user || undefined;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db
-      .insert(connections)
-      .values(insertUser as any)
+      .insert(users)
+      .values(insertUser)
       .returning();
-    return user as any;
+    return user;
   }
 
   async createConnection(connection: InsertConnection & { userId: string }): Promise<Connection> {
@@ -287,6 +294,58 @@ export class DatabaseStorage implements IStorage {
       .where(eq(analysisJobs.id, jobId));
   }
 
+  async getAnalysisJob(jobId: string): Promise<AnalysisJob | undefined> {
+    const [job] = await db
+      .select()
+      .from(analysisJobs)
+      .where(eq(analysisJobs.id, jobId));
+    return job || undefined;
+  }
+
+  async upsertContextForTable(contextItem: InsertContextItem): Promise<ContextItem> {
+    // Check if context already exists for this table
+    const [existing] = await db
+      .select()
+      .from(contextItems)
+      .where(eq(contextItems.tableId, contextItem.tableId));
+
+    if (existing) {
+      // Update existing context
+      const [updated] = await db
+        .update(contextItems)
+        .set({
+          ...contextItem,
+          updatedAt: new Date()
+        })
+        .where(eq(contextItems.tableId, contextItem.tableId))
+        .returning();
+      return updated;
+    } else {
+      // Insert new context
+      const [inserted] = await db
+        .insert(contextItems)
+        .values(contextItem)
+        .returning();
+      return inserted;
+    }
+  }
+
+  async getContextByTableId(tableId: string): Promise<ContextItem | undefined> {
+    const [context] = await db
+      .select()
+      .from(contextItems)
+      .where(eq(contextItems.tableId, tableId));
+    return context || undefined;
+  }
+
+  async getContextsByDatabaseId(databaseId: string): Promise<ContextItem[]> {
+    return await db
+      .select()
+      .from(contextItems)
+      .where(eq(contextItems.databaseId, databaseId))
+      .orderBy(desc(contextItems.createdAt));
+  }
+
   async deduplicateTablesForDatabase(databaseId: string): Promise<number> {
     // Get all tables grouped by schema.name
     const allTables = await db
@@ -305,7 +364,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     let deletedCount = 0;
-    for (const [key, duplicates] of tableGroups) {
+    for (const [key, duplicates] of Array.from(tableGroups.entries())) {
       if (duplicates.length > 1) {
         // Keep the first (newest) and delete the rest
         const [keep, ...toDelete] = duplicates;
