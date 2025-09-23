@@ -1186,8 +1186,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return `"${escaped}"`;
       };
       
-      // Gather all data
-      const tables = await storage.getTablesByDatabaseId(id);
+      // Gather only selected tables
+      const tables = await storage.getSelectedTables(id);
       const contextItems = await storage.getContextsByDatabaseId(id);
       const allQuestions = await storage.getQuestionsByDatabaseId(id);
       
