@@ -685,12 +685,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     geminiService: any,
     jobId: string
   ): Promise<number> {
-    // Get sample data and columns
-    const sampleData = await schemaAnalyzer.getSampleData(table.id);
-    const columns = await storage.getColumnsByTableId(table.id);
+    console.log(`[Job ${jobId}] Starting processSingleTable for ${table.name}...`);
     
-    // Get statistical analysis for richer context
-    const statisticalResults = await statisticalAnalyzer.analyzeTable(table.id);
+    let sampleData: any[];
+    let columns: any[];
+    let statisticalResults: any;
+    
+    try {
+      // Get sample data and columns with enhanced error handling
+      console.log(`[Job ${jobId}] Attempting to get sample data for table ${table.name}...`);
+      sampleData = await schemaAnalyzer.getSampleData(table.id);
+      console.log(`[Job ${jobId}] Sample data retrieved for ${table.name}: ${sampleData.length} rows`);
+      
+      console.log(`[Job ${jobId}] Getting columns for table ${table.name}...`);
+      columns = await storage.getColumnsByTableId(table.id);
+      console.log(`[Job ${jobId}] Columns retrieved for ${table.name}: ${columns.length} columns`);
+      
+      // Get statistical analysis for richer context
+      console.log(`[Job ${jobId}] Running statistical analysis for table ${table.name}...`);
+      statisticalResults = await statisticalAnalyzer.analyzeTable(table.id);
+      console.log(`[Job ${jobId}] Statistical analysis completed for ${table.name}`);
+    } catch (dataError) {
+      // Handle database sampling/analysis errors (e.g., table doesn't exist in DB)
+      const errorMessage = `Failed to sample data or analyze table '${table.name}': ${dataError instanceof Error ? dataError.message : 'Unknown error'}`;
+      console.error(`[Job ${jobId}] ${errorMessage}`);
+      
+      // Store error context but don't generate questions
+      await storage.upsertContextForTable({
+        databaseId: table.databaseId,
+        tableId: table.id,
+        tableDesc: { error: errorMessage, tableName: table.name },
+        columnDescs: [],
+        questionsGenerated: 0
+      });
+      
+      // Throw error with clear context to be caught by parent
+      throw new Error(`Table '${table.name}' sampling failed: ${dataError instanceof Error ? dataError.message : 'Unknown database error'}`);
+    }
     
     // Generate schema string
     const schema = `CREATE TABLE ${table.schema}.${table.name} (\n${columns.map(c => `  ${c.name} ${c.dataType}`).join(',\n')}\n);`;
