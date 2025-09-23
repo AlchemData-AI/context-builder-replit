@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -114,10 +114,28 @@ export default function KnowledgeGraph() {
   };
 
   // Auto-select connected Neo4j connection
-  if (connectedNeo4j && !selectedNeo4jConnection) {
-    setSelectedNeo4jConnection(connectedNeo4j.id);
-    setTimeout(() => fetchGraphStats(), 1000);
-  }
+  useEffect(() => {
+    if (connectedNeo4j && !selectedNeo4jConnection) {
+      setSelectedNeo4jConnection(connectedNeo4j.id);
+      // Delay fetching stats to ensure the connection is properly set
+      const timer = setTimeout(async () => {
+        if (!database) return;
+        
+        try {
+          const response = await fetch(
+            `/api/databases/${database.id}/graph-stats?neo4jConnectionId=${connectedNeo4j.id}`
+          );
+          if (response.ok) {
+            const stats = await response.json();
+            setGraphStats(stats);
+          }
+        } catch (error) {
+          console.error('Failed to fetch graph stats:', error);
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [connectedNeo4j?.id, selectedNeo4jConnection, database?.id]);
 
   const getPersonaColor = (index: number) => {
     const colors = ['purple', 'blue', 'green', 'amber', 'pink'];

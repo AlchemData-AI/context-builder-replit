@@ -151,8 +151,33 @@ export default function SMEInterview() {
     }
   };
 
-  const exportCSV = () => {
-    window.open(`/api/databases/${database?.id}/export-csv`, '_blank');
+  const exportCSV = async () => {
+    if (!database) return;
+    
+    try {
+      const response = await fetch(`/api/databases/${database.id}/export-csv`);
+      if (!response.ok) {
+        throw new Error('Export failed');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${database.name}-sme-questions.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      toast({ title: "Export successful", description: "SME questions exported to CSV" });
+    } catch (error) {
+      toast({ 
+        title: "Export failed", 
+        description: "Failed to export SME questions", 
+        variant: "destructive" 
+      });
+    }
   };
 
   const getPriorityColor = (priority: string) => {

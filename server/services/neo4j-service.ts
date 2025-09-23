@@ -161,9 +161,9 @@ export class Neo4jService {
         tableId: table.id,
         name: table.name,
         schema: table.schema,
-        description: table.description,
-        rowCount: table.rowCount,
-        columnCount: table.columnCount
+        description: table.description || '',
+        rowCount: table.rowCount ?? 0,
+        columnCount: table.columnCount ?? 0
       });
     } finally {
       await session.close();
@@ -189,10 +189,10 @@ export class Neo4jService {
         columnId: column.id,
         name: column.name,
         dataType: column.dataType,
-        description: column.description,
-        isNullable: column.isNullable,
-        cardinality: column.cardinality,
-        nullPercentage: column.nullPercentage
+        description: column.description || '',
+        isNullable: column.isNullable ?? false,
+        cardinality: column.cardinality ?? 0,
+        nullPercentage: column.nullPercentage ?? 0
       });
     } finally {
       await session.close();
@@ -212,8 +212,8 @@ export class Neo4jService {
       `, {
         columnId,
         valueId: value.id,
-        value: value.value,
-        frequency: value.frequency
+        value: value.value || '',
+        frequency: value.frequency ?? 0
       });
     } finally {
       await session.close();

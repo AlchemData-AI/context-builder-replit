@@ -12,6 +12,96 @@ import { smeInterviewService } from "./services/sme-interview";
 import { insertConnectionSchema, insertDatabaseSchema, insertTableSchema, insertAgentPersonaSchema } from "@shared/schema";
 import { z } from "zod";
 
+// Helper function to create default personas when none exist
+async function createDefaultPersonas(databaseId: string) {
+  const personas = [];
+  
+  try {
+    // Get database info
+    const database = await storage.getDatabase(databaseId);
+    if (!database) return [];
+    
+    // Get selected tables
+    const tables = await storage.getSelectedTables(databaseId);
+    if (tables.length === 0) return [];
+    
+    // Get SME responses for context
+    const smeQuestions = await storage.getQuestionsByDatabaseId(databaseId);
+    const answeredQuestions = smeQuestions.filter(q => q.isAnswered && q.response);
+    
+    // Create a default "Database Analyst" persona
+    const personaData = {
+      name: "Database Analyst",
+      description: `Expert analyst for ${database.name} database with ${tables.length} tables. ` + 
+                  (answeredQuestions.length > 0 
+                    ? `Validated through ${answeredQuestions.length} SME responses covering data relationships and business logic.`
+                    : "Specialized in database schema analysis and data relationship discovery."),
+      keywords: ["database", "analysis", "schema", "relationships", ...tables.map(t => t.name).slice(0, 5)],
+      databaseId
+    };
+    console.log('Creating default persona with data:', JSON.stringify(personaData, null, 2));
+    
+    const defaultPersona = await storage.createAgentPersona(personaData);
+    
+    personas.push(defaultPersona);
+    
+    // If we have many tables (>10), create domain-specific personas
+    if (tables.length > 10) {
+      // Group tables by common prefixes or keywords
+      const tableGroups = groupTablesByDomain(tables);
+      
+      for (const [domain, domainTables] of Object.entries(tableGroups)) {
+        if (domainTables.length >= 3) { // Only create personas for significant domains
+          const domainPersona = await storage.createAgentPersona({
+            name: `${domain.charAt(0).toUpperCase() + domain.slice(1)} Specialist`,
+            description: `Domain expert specializing in ${domain}-related data within ${database.name}. ` +
+                        `Manages ${domainTables.length} tables including ${domainTables.slice(0, 3).map(t => t.name).join(', ')}.`,
+            keywords: [domain, "specialist", ...domainTables.map(t => t.name).slice(0, 3)],
+            databaseId
+          });
+          personas.push(domainPersona);
+        }
+      }
+    }
+    
+    console.log(`Created ${personas.length} default personas for database ${databaseId}`);
+    return personas;
+    
+  } catch (error) {
+    console.error('Failed to create default personas:', error);
+    return [];
+  }
+}
+
+// Helper function to group tables by domain based on naming patterns
+function groupTablesByDomain(tables: any[]) {
+  const domains: Record<string, any[]> = {};
+  
+  for (const table of tables) {
+    const tableName = table.name.toLowerCase();
+    
+    // Extract domain from common prefixes or keywords
+    let domain = 'general';
+    
+    if (tableName.includes('user') || tableName.includes('account') || tableName.includes('profile')) {
+      domain = 'user';
+    } else if (tableName.includes('order') || tableName.includes('purchase') || tableName.includes('payment')) {
+      domain = 'commerce';
+    } else if (tableName.includes('product') || tableName.includes('inventory') || tableName.includes('catalog')) {
+      domain = 'product';
+    } else if (tableName.includes('log') || tableName.includes('audit') || tableName.includes('event')) {
+      domain = 'audit';
+    } else if (tableName.includes('config') || tableName.includes('setting') || tableName.includes('param')) {
+      domain = 'configuration';
+    }
+    
+    if (!domains[domain]) domains[domain] = [];
+    domains[domain].push(table);
+  }
+  
+  return domains;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Configure multer for CSV file uploads
   const csvUpload = multer({
@@ -1207,14 +1297,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Enhanced knowledge graph building function that incorporates SME responses (for new graphs)
   async function buildEnhancedKnowledgeGraph(databaseId: string) {
-    console.log('Building enhanced knowledge graph for database:', databaseId);
+    const startTime = Date.now();
+    console.log('Building enhanced knowledge graph for database:', databaseId, 'at', new Date().toISOString());
     
     // Create namespace for this database
     const namespace = `database_${databaseId}`;
     await neo4jService.createNamespace(namespace);
     
     // Get personas and their tables
+    console.log('Fetching personas at', Date.now() - startTime + 'ms');
     const personas = await storage.getPersonasByDatabaseId(databaseId);
+    console.log('Found', personas.length, 'personas at', Date.now() - startTime + 'ms');
     
     let stats = {
       personaCount: personas.length,
@@ -1224,7 +1317,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       relationshipCount: 0
     };
     
-    for (const persona of personas) {
+    for (let i = 0; i < personas.length; i++) {
+      const persona = personas[i];
+      console.log(`Processing persona ${i + 1}/${personas.length}:`, persona.name, 'at', Date.now() - startTime + 'ms');
+      
       // Create Agent Persona node
       await neo4jService.createAgentPersona({
         id: persona.id,
@@ -1235,7 +1331,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       // Get tables for this persona (for now, just get all selected tables)
+      console.log('Fetching tables for persona at', Date.now() - startTime + 'ms');
       const tables = await storage.getSelectedTables(databaseId);
+      console.log('Found', tables.length, 'tables at', Date.now() - startTime + 'ms');
       stats.tableCount += tables.length;
       
       for (const table of tables) {
@@ -1244,6 +1342,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: table.id,
           name: table.name,
           schema: table.schema,
+          description: table.description || `Table containing ${table.columnCount || 0} columns with data analysis context`,
           rowCount: table.rowCount ?? undefined,
           columnCount: table.columnCount ?? undefined
         });
@@ -1335,7 +1434,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
     
-    console.log('Enhanced knowledge graph built successfully:', stats);
+    const totalTime = Date.now() - startTime;
+    console.log('Enhanced knowledge graph built successfully in', totalTime + 'ms:', stats);
     return stats;
   }
 
@@ -1527,9 +1627,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/databases/:id/build-graph", async (req, res) => {
     try {
       const { id } = req.params;
+      console.log('Build graph request received:', {
+        params: req.params,
+        body: req.body,
+        headers: req.headers['content-type']
+      });
       const { neo4jConnectionId } = req.body;
       
       if (!neo4jConnectionId) {
+        console.log('Missing neo4jConnectionId in request body:', JSON.stringify(req.body));
         return res.status(400).json({ error: "Neo4j connection ID is required" });
       }
       
@@ -1545,12 +1651,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       try {
+        console.log('Starting knowledge graph build process...');
+        
         // Create namespace for this database
         const namespace = `database_${id}`;
+        console.log('Creating namespace:', namespace);
         await neo4jService.createNamespace(namespace);
         
         // Get personas and their tables
-        const personas = await storage.getPersonasByDatabaseId(id);
+        console.log('Fetching personas for database:', id);
+        let personas = await storage.getPersonasByDatabaseId(id);
+        console.log('Found personas:', personas.length);
+        
+        // If no personas exist, create default personas from SME responses and tables
+        if (personas.length === 0) {
+          console.log('No personas found, creating default personas from available data...');
+          try {
+            personas = await createDefaultPersonas(id);
+            console.log(`Successfully created ${personas.length} default personas`);
+          } catch (error) {
+            console.error('Error creating default personas:', error);
+            throw error;
+          }
+        }
         
         for (const persona of personas) {
           // Create Agent Persona node
@@ -1571,6 +1694,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               id: table.id,
               name: table.name,
               schema: table.schema,
+              description: table.description || `Table containing ${table.columnCount || 0} columns with data analysis context`,
               rowCount: table.rowCount ?? undefined,
               columnCount: table.columnCount ?? undefined
             });
