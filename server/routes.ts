@@ -990,7 +990,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const enumColumns = columns.filter(c => 
       c.cardinality != null && 
       c.cardinality >= 2 && 
-      c.cardinality <= 20 && // Consider columns with 2-20 distinct values as enum-like
+      c.cardinality < 100 && // Consider columns with 2-99 distinct values as enum-like
       c.distinctValues != null
     );
 
