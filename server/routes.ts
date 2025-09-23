@@ -1155,105 +1155,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/databases/:id/export-csv", async (req, res) => {
     try {
       const { id } = req.params;
-      const csvData = await smeInterviewService.exportToCSV(id);
+      
+      // Simple approach: just get questions and export them quickly
+      const questions = await storage.getQuestionsByDatabaseId(id);
       
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', 'attachment; filename=sme-questions.csv');
       
-      // Get AI context data for tables and columns
-      const contextItems = await storage.getContextsByDatabaseId(id);
-      const tables = await storage.getTablesByDatabaseId(id);
-      const allColumns = [];
-      for (const table of tables) {
-        const columns = await storage.getColumnsByTableId(table.id);
-        allColumns.push(...columns);
-      }
+      // Simple CSV format
+      let csvOutput = 'Question,Type,Priority,Options,Response,IsAnswered\n';
       
-      // Create a comprehensive mapping of columns with all context
-      const columnContextMap = new Map();
-      
-      // Build enhanced column data with AI context
-      for (const contextItem of contextItems) {
-        const table = tables.find(t => t.id === contextItem.tableId);
-        const columnDescs = contextItem.columnDescs;
-        
-        if (Array.isArray(columnDescs)) {
-          for (const colDesc of columnDescs) {
-            const column = allColumns.find(c => c.tableId === contextItem.tableId && c.name === colDesc.column_name);
-            const key = `${table?.name || 'Unknown'}:${colDesc.column_name}`;
-            
-            columnContextMap.set(key, {
-              table: table?.name || 'Unknown',
-              column: colDesc.column_name,
-              dataType: column?.dataType || 'Unknown',
-              hypothesis: colDesc.description || '',
-              businessMeaning: colDesc.business_meaning || '',
-              dataPatterns: colDesc.data_patterns || '',
-              sampleValues: colDesc.enum_values ? colDesc.enum_values.slice(0, 5).join('; ') : '',
-              question: null,
-              questionType: '',
-              priority: '',
-              options: '',
-              response: ''
-            });
-          }
-        }
-      }
-      
-      // Convert to CSV format
-      let csvOutput = '';
-      
-      // Add Agent Persona questions
-      if (csvData.agentPersonaQuestions.length > 0) {
-        csvOutput += 'AGENT PERSONA QUESTIONS\n';
-        csvOutput += 'Persona,Question,Type,Priority,Options,Response\n';
-        csvData.agentPersonaQuestions.forEach(q => {
-          csvOutput += `"${q.persona}","${q.question}","${q.questionType}","${q.priority}","${q.options || ''}","${q.response || ''}"\n`;
-        });
-        csvOutput += '\n';
-      }
-      
-      // Add table questions
-      if (csvData.tableQuestions.length > 0) {
-        csvOutput += 'TABLE QUESTIONS\n';
-        csvOutput += 'Table,Question,Type,Priority,Options,Response\n';
-        csvData.tableQuestions.forEach(q => {
-          csvOutput += `"${q.table}","${q.question}","${q.questionType}","${q.priority}","${q.options || ''}","${q.response || ''}"\n`;
-        });
-        csvOutput += '\n';
-      }
-      
-      // Enhanced column questions section with full context
-      csvOutput += 'ENHANCED COLUMN ANALYSIS & QUESTIONS\n';
-      csvOutput += 'Table,Column,DataType,AIHypothesis,BusinessMeaning,DataPatterns,SampleValues,Question,QuestionType,Priority,Options,Response\n';
-      
-      // First, add existing column questions with enhanced context
-      if (csvData.columnQuestions.length > 0) {
-        csvData.columnQuestions.forEach(q => {
-          const key = `${q.table}:${q.column}`;
-          const context = columnContextMap.get(key) || {};
-          
-          csvOutput += `"${q.table}","${q.column}","${q.dataType || context.dataType || ''}","${context.hypothesis || ''}","${context.businessMeaning || ''}","${context.dataPatterns || ''}","${context.sampleValues || ''}","${q.question}","${q.questionType}","${q.priority}","${q.options || ''}","${q.response || ''}"\n`;
-          
-          // Mark this column as processed
-          columnContextMap.delete(key);
-        });
-      }
-      
-      // Add remaining columns with AI context but no questions yet
-      for (const [key, context] of columnContextMap) {
-        csvOutput += `"${context.table}","${context.column}","${context.dataType}","${context.hypothesis}","${context.businessMeaning}","${context.dataPatterns}","${context.sampleValues}","","","","",""\n`;
-      }
-      csvOutput += '\n';
-      
-      // Add relationship questions
-      if (csvData.relationshipQuestions.length > 0) {
-        csvOutput += 'RELATIONSHIP QUESTIONS\n';
-        csvOutput += 'FromTable,FromColumn,ToTable,ToColumn,Question,Type,Priority,Options,Response\n';
-        csvData.relationshipQuestions.forEach(q => {
-          csvOutput += `"${q.fromTable}","${q.fromColumn}","${q.toTable}","${q.toColumn}","${q.question}","${q.questionType}","${q.priority}","${q.options || ''}","${q.response || ''}"\n`;
-        });
-      }
+      questions.forEach(q => {
+        const cleanText = (text: string | null | undefined) => {
+          const str = typeof text === 'string' ? text : (text || '').toString();
+          return `"${str.replace(/"/g, '""')}"`;
+        };
+        csvOutput += `${cleanText(q.questionText)},${cleanText(q.questionType)},${cleanText(q.priority || 'medium')},${cleanText(q.options)},${cleanText(q.response)},${q.isAnswered ? 'Yes' : 'No'}\n`;
+      });
       
       res.send(csvOutput);
     } catch (error) {

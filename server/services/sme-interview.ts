@@ -196,20 +196,20 @@ export class SMEInterviewService {
     
     const byCategory = {
       table: {
-        total: questions.filter(q => q.questionType === 'table').length,
-        answered: questions.filter(q => q.questionType === 'table' && q.isAnswered).length
+        total: questions.filter(q => q.questionType === 'free_text_definitions').length,
+        answered: questions.filter(q => q.questionType === 'free_text_definitions' && q.isAnswered).length
       },
       column: {
-        total: questions.filter(q => q.questionType === 'column').length,
-        answered: questions.filter(q => q.questionType === 'column' && q.isAnswered).length
+        total: questions.filter(q => q.questionType === 'multiple_choice').length,
+        answered: questions.filter(q => q.questionType === 'multiple_choice' && q.isAnswered).length
       },
       relationship: {
-        total: questions.filter(q => q.questionType === 'relationship').length,
-        answered: questions.filter(q => q.questionType === 'relationship' && q.isAnswered).length
+        total: questions.filter(q => q.questionType === 'yes_no').length,
+        answered: questions.filter(q => q.questionType === 'yes_no' && q.isAnswered).length
       },
       ambiguity: {
-        total: questions.filter(q => q.questionType === 'ambiguity').length,
-        answered: questions.filter(q => q.questionType === 'ambiguity' && q.isAnswered).length
+        total: 0, // Keep as placeholder for future use
+        answered: 0
       }
     };
 
@@ -227,103 +227,32 @@ export class SMEInterviewService {
     const personas = await storage.getPersonasByDatabaseId(databaseId);
     const contextItems = await storage.getContextsByDatabaseId(databaseId);
 
-    // Get all columns for context and sample values
+    // Get all columns for context and sample values (optimized - no database connection)
     const allColumns: Column[] = [];
     const columnSampleValues = new Map<string, string>(); // columnId -> sample values string
     
-    // Get database connection for sample values (wrap in try/finally for proper cleanup)
-    const database = await storage.getDatabase(databaseId);
-    let postgresConnected = false;
-    
-    try {
-      if (database) {
-        const connection = await storage.getConnection(database.connectionId);
-        if (connection) {
-          const config = connection.config as any;
-          postgresConnected = await postgresAnalyzer.connect(config);
-        }
-      }
-
-      for (const table of tables) {
-        const columns = await storage.getColumnsByTableId(table.id);
-        allColumns.push(...columns);
-        
-        // Get sample values for each column if connected to database
-        if (postgresConnected) {
-          for (const column of columns) {
-            try {
-              // Check if we already have distinct values from previous analysis
-              let sampleValuesStr = 'No sample values available';
-              
-              if (column.distinctValues) {
-                // Use existing distinct values if available
-                try {
-                  const existingValues = JSON.parse(column.distinctValues);
-                  if (Array.isArray(existingValues) && existingValues.length > 0) {
-                    const filteredValues = existingValues
-                      .filter(val => val != null && val !== '')
-                      .slice(0, 5)
-                      .map(val => String(val).substring(0, 50)); // Truncate long values
-                    sampleValuesStr = filteredValues.length > 0 ? filteredValues.join(', ') : 'No distinct values found';
-                  }
-                } catch (parseError) {
-                  // Fall through to fetch from database
-                }
-              }
-              
-              // If no existing values, fetch from database (only for likely enum columns)
-              if (sampleValuesStr === 'No sample values available' && 
-                  (column.cardinality <= 100 || ['varchar', 'text', 'char'].some(type => column.dataType.toLowerCase().includes(type)))) {
-                const distinctValues = await postgresAnalyzer.getDistinctValues(
-                  table.name,
-                  column.name,
-                  5, // Limit to 5 sample values
-                  table.schema || 'public'
-                );
-                const filteredValues = distinctValues
-                  .filter(val => val != null && val !== '')
-                  .map(val => String(val).substring(0, 50)); // Truncate long values
-                sampleValuesStr = filteredValues.length > 0 
-                  ? filteredValues.join(', ')
-                  : 'No distinct values found';
-              }
-              
-              columnSampleValues.set(column.id, sampleValuesStr);
-            } catch (error) {
-              console.warn(`Failed to get sample values for ${table.name}.${column.name}:`, error);
-              columnSampleValues.set(column.id, 'Unable to fetch sample values');
+    for (const table of tables) {
+      const columns = await storage.getColumnsByTableId(table.id);
+      allColumns.push(...columns);
+      
+      // Use only existing distinct values from storage (faster)
+      for (const column of columns) {
+        let sampleValuesStr = 'No sample values available';
+        if (column.distinctValues) {
+          try {
+            const existingValues = JSON.parse(column.distinctValues);
+            if (Array.isArray(existingValues) && existingValues.length > 0) {
+              const filteredValues = existingValues
+                .filter(val => val != null && val !== '')
+                .slice(0, 5)
+                .map(val => String(val).substring(0, 50));
+              sampleValuesStr = filteredValues.length > 0 ? filteredValues.join(', ') : 'No distinct values found';
             }
-          }
-        } else {
-          // If not connected, check for existing distinct values in storage
-          for (const column of columns) {
-            let sampleValuesStr = 'No sample values available';
-            if (column.distinctValues) {
-              try {
-                const existingValues = JSON.parse(column.distinctValues);
-                if (Array.isArray(existingValues) && existingValues.length > 0) {
-                  const filteredValues = existingValues
-                    .filter(val => val != null && val !== '')
-                    .slice(0, 5)
-                    .map(val => String(val).substring(0, 50));
-                  sampleValuesStr = filteredValues.length > 0 ? filteredValues.join(', ') : 'No distinct values found';
-                }
-              } catch (parseError) {
-                // Keep default message
-              }
-            }
-            columnSampleValues.set(column.id, sampleValuesStr);
+          } catch (parseError) {
+            // Keep default message
           }
         }
-      }
-    } finally {
-      // Ensure database connection is always cleaned up
-      if (postgresConnected) {
-        try {
-          await postgresAnalyzer.disconnect();
-        } catch (error) {
-          console.warn('Failed to disconnect from PostgreSQL:', error);
-        }
+        columnSampleValues.set(column.id, sampleValuesStr);
       }
     }
 

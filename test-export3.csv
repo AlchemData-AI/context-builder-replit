@@ -1,0 +1,90 @@
+Question,Type,Priority,Options,Response,IsAnswered
+"Is there a standardized format or guideline for how the `time_frame` text should be entered, or is it entirely free-form based on the study protocol?","free_text_definitions","medium","","",No
+"Could you provide the specific definition used to classify an event as 'serious' versus 'other'? Does this align with FDA or ICH guidelines for adverse event reporting?","free_text_definitions","high","","",No
+"This column is 100% null. Can we confirm if it is deprecated and can be ignored for analysis?","yes_no","low","","",No
+"Similar to `default_vocab`, this column is 100% null. Can this column be safely ignored for current analyses?","yes_no","low","","",No
+"Does `subjects_affected` always represent a unique count of individuals, even if an individual experienced the event multiple times?","yes_no","high","","",No
+"Does `subjects_at_risk` represent the total number of participants randomized to a specific `result_group_id`, or does it represent the 'safety population' which might exclude some randomized participants (e.g., those who didn't receive treatment)?","free_text_definitions","high","","",No
+"This field contains critical context. Are there standardized phrases or templates used in these descriptions that could help programmatically extract key information, such as the definition of the safety population?","free_text_definitions","medium","","",No
+"What is the primary reason for nulls in `event_count`? Does a null value indicate the count is equal to `subjects_affected`, or that this specific data point was not collected?","multiple_choice","high","Count is equal to subjects_affected,Data was not collected,Other (please specify)","",No
+"The values in `organ_system` appear to be MedDRA System Organ Classes (SOCs). Can you confirm this is the standard used for this classification?","yes_no","high","","",No
+"Does `adverse_event_term` always map to a MedDRA Preferred Term (PT), or can it represent other levels of the MedDRA hierarchy (like Lowest Level Term, LLT)?","free_text_definitions","medium","","",No
+"Does `frequency_threshold` represent the percentage of subjects ((subjects_affected / subjects_at_risk) * 100) below which events are not reported? For example, does a value of 5 mean only events affecting 5% or more of subjects are listed?","yes_no","high","","",No
+"The sample data shows various versions of MedDRA (e.g., 'MedDRA 19.1', 'MEDDRA V17.0'). Is it important to normalize these version strings for analysis, and does the version impact the interpretation of terms?","yes_no","medium","","",No
+"Could you provide formal definitions for 'SYSTEMATIC_ASSESSMENT' and 'NON_SYSTEMATIC_ASSESSMENT'? How does this distinction affect how we should interpret the event frequencies?","free_text_definitions","high","","",No
+"Can we confirm `nct_id` is the unique identifier for a clinical trial and that it can be used to join this table with other study-level tables like `studies` or `sponsors`?","yes_no","high","","",No
+"Does `result_group_id` uniquely identify a participant group within a single `nct_id`? Can we join this to a `result_groups` table to get the title and description of the group?","yes_no","high","","",No
+"Is the `id` column a simple auto-incrementing primary key with no other business meaning?","yes_no","low","","",No
+"What is the relationship between `ctgov_group_code` and `result_group_id`? Is the group code a stable, public-facing identifier while the ID is an internal database key?","free_text_definitions","high","","",No
+"Is the 'nlm_download_date_description' column deprecated or intended for a specific use case that hasn't occurred in the dataset?","yes_no","low","","",No
+"Does 'study_first_submitted_date' represent the very first time a study record was created, even if it was incomplete?","yes_no","medium","","",No
+"Is it correct that 'results_first_submitted_date' is null for studies that are still ongoing, or are there other reasons (e.g., study type) why results might not be submitted?","yes_no","high","","",No
+"What kind of changes to a study record would trigger an update to the 'last_update_submitted_date'?","free_text_definitions","medium","","",No
+"What does the Quality Control (QC) process entail between the 'study_first_submitted_date' and the 'study_first_submitted_qc_date'?","free_text_definitions","medium","","",No
+"Is the 'study_first_posted_date' the official start of public visibility for the trial?","yes_no","high","","",No
+"What is the business process for updating a date from 'ESTIMATED' to 'ACTUAL'?","free_text_definitions","medium","","",No
+"Is there a standard delay between 'results_first_submitted_qc_date' and 'results_first_posted_date'?","yes_no","low","","",No
+"What is 'disposition' data in the context of a clinical trial, and under what circumstances is it submitted?","free_text_definitions","medium","","",No
+"Is 'disposition' data always posted after a QC review, or can it be posted directly?","yes_no","low","","",No
+"Given this field is almost always null, is the concept of an 'ESTIMATED' disposition posting date relevant?","yes_no","low","","",No
+"Does every update submitted ('last_update_submitted_date') go through a QC process resulting in a 'last_update_submitted_qc_date'?","yes_no","medium","","",No
+"Does the 'last_update_posted_date' reflect the date the public can see the most current information for a study?","yes_no","high","","",No
+"Why would a 'last_update_posted_date' be 'ESTIMATED'?","free_text_definitions","low","","",No
+"Is the 'start_month_year' field a legacy column that has been superseded by the 'start_date' column, or does it serve a distinct purpose?","yes_no","low","","",No
+"Does 'start_date' signify the start of recruitment or the date the first participant is officially enrolled?","multiple_choice","high","Start of recruitment,First participant enrolled,Other","",No
+"What is the relationship between 'verification_date' and 'last_update_posted_date'?","free_text_definitions","medium","","",No
+"Is there a regulatory requirement for how often a study record must be verified, thus updating the 'verification_date'?","yes_no","medium","","",No
+"Is this column populated when only the month and year of completion are known, while 'completion_date' is used for the exact date?","yes_no","low","","",No
+"Does the 'completion_date_type' automatically change to 'ACTUAL' when the 'overall_status' is updated to 'COMPLETED'?","yes_no","medium","","",No
+"Please confirm the definition: Is 'completion_date' the date the last data was collected from the last participant for all outcomes?","yes_no","high","","",No
+"What is the business significance of tracking the 'primary_completion_date' separately from the overall 'completion_date'?","free_text_definitions","high","","",No
+"Is it possible for the 'primary_completion_date' to be significantly earlier than the overall 'completion_date'? If so, what is a common scenario for this?","yes_no","medium","","",No
+"In what format is 'target_duration' expected (e.g., '2 Years', '36 Months', '180 Days')? Is there a standard format?","free_text_definitions","low","","",No
+"Is the 'acronym' an officially registered name for the study?","yes_no","low","","",No
+"Is this field primarily used for post-hoc analysis descriptions, or is it defined at the start of the study?","free_text_definitions","medium","","",No
+"Is the 'brief_title' the primary title used in public communications about the study?","yes_no","medium","","",No
+"How does the 'official_title' differ in purpose from the 'brief_title'?","free_text_definitions","medium","","",No
+"What is the difference between 'last_known_status' and 'overall_status'? When would one be used over the other?","free_text_definitions","high","","",No
+"Please confirm the definition for each study phase value, including the combined ones like 'PHASE1/PHASE2'.","free_text_definitions","high","NA,EARLY_PHASE1,PHASE1,PHASE1/PHASE2,PHASE2,PHASE2/PHASE3,PHASE3,PHASE4","",No
+"Is the 'enrollment' value the target number of participants or the actual number enrolled, and how does 'enrollment_type' clarify this?","free_text_definitions","high","","",No
+"Does 'source' represent the primary sponsor, the principal investigator's institution, or can it be a funding body?","multiple_choice","medium","Sponsor,Investigator's Institution,Funder,Can be any of these","",No
+"Is the 'limitations_and_caveats' field typically filled out after the study is complete and results are analyzed?","yes_no","low","","",No
+"Is it correct that 'number_of_groups' is used for observational studies and 'number_of_arms' is for interventional studies?","yes_no","high","","",No
+"Is 'why_stopped' a required field when a study's status changes to 'TERMINATED'?","yes_no","medium","","",No
+"If 'has_expanded_access' is true, should the 'expanded_access_type_*' columns be populated?","yes_no","medium","","",No
+"What are the criteria for 'Individual' expanded access?","free_text_definitions","low","","",No
+"What defines an 'Intermediate' expanded access program?","free_text_definitions","low","","",No
+"Are there specific study types or phases (e.g., Phase 3) that are required to have a Data Monitoring Committee (DMC)?","yes_no","medium","","",No
+"Does this flag being TRUE imply the study is being conducted in the US or under US jurisdiction?","yes_no","high","","",No
+"Can both 'is_fda_regulated_drug' and 'is_fda_regulated_device' be true for the same study?","yes_no","medium","","",No
+"If 'is_fda_regulated_device' is true, and 'is_unapproved_device' is also true, does this mean it is an investigational device study?","yes_no","medium","","",No
+"What are the regulatory implications when 'is_us_export' is true?","free_text_definitions","low","","",No
+"Please confirm the definitions for the 'biospec_retention' categories.","free_text_definitions","medium","SAMPLES_WITH_DNA,SAMPLES_WITHOUT_DNA,NONE_RETAINED","",No
+"Is this field expected to be populated if 'biospec_retention' is not 'NONE_RETAINED'?","yes_no","low","","",No
+"What does IPD stand for, and what kind of data does it include?","free_text_definitions","high","","",No
+"Is this field expected to be a direct link to a data request form or a general information page?","free_text_definitions","low","","",No
+"Are there regulations or policies that influence the 'plan_to_share_ipd' decision?","yes_no","medium","","",No
+"Does 'created_at' relate to a study milestone (like submission date) or is it purely a technical database timestamp?","multiple_choice","low","Related to study milestone,Technical database timestamp","",No
+"Does 'updated_at' reflect any modification to the record, and does it align with 'last_update_posted_date'?","free_text_definitions","low","","",No
+"Please provide definitions for each 'source_class' category.","free_text_definitions","high","INDUSTRY,NIH,FED,OTHER_GOV,NETWORK,INDIV,OTHER,UNKNOWN","",No
+"What are the common valid reasons for a 'delayed_posting'?","free_text_definitions","medium","","",No
+"How does 'expanded_access_status_for_nctid' relate to the boolean 'has_expanded_access' flag?","free_text_definitions","medium","","",No
+"In what type of studies is 'baseline_type_units_analyzed' a critical field to populate?","free_text_definitions","low","","",No
+"What qualifies as a 'patient_registry' in this context? Does it differ from a standard observational study?","free_text_definitions","medium","","",No
+"Is 'nct_id' the official and unique identifier used across all regulatory bodies and publications for a given trial?","yes_no","high","","",No
+"Is submission of disposition data a mandatory step for study closure?","yes_no","medium","","",No
+"What are the key checks in the QC process for study results?","free_text_definitions","medium","","",No
+"Under what circumstance would a results posting date be 'ESTIMATED'?","free_text_definitions","low","","",No
+"Does the 'start_date_type' switch to 'ACTUAL' on the day the first patient is enrolled?","yes_no","high","","",No
+"Is this field redundant if 'primary_completion_date' is always populated, or does it serve a specific reporting purpose?","yes_no","low","","",No
+"Please confirm the definitions for each 'study_type' value.","free_text_definitions","high","INTERVENTIONAL,OBSERVATIONAL,EXPANDED_ACCESS","",No
+"Could you provide a glossary defining each of the 14 'overall_status' values and the typical progression between them?","free_text_definitions","high","","",No
+"What is the key difference between 'TERMINATED', 'WITHDRAWN', and 'SUSPENDED' statuses?","free_text_definitions","high","","",No
+"When a study is marked 'COMPLETED', should the 'enrollment_type' always be 'ACTUAL'?","yes_no","medium","","",No
+"If a study is 'INTERVENTIONAL', should 'number_of_arms' be populated and 'number_of_groups' be null?","yes_no","high","","",No
+"What defines a 'Treatment' expanded access program compared to 'Individual' or 'Intermediate'?","free_text_definitions","low","","",No
+"Does 'is_ppsd' stand for 'Pediatric Postmarket Surveillance of a Device', and what are the implications when this is true?","free_text_definitions","medium","","",No
+"Is this field required when 'plan_to_share_ipd' is 'YES'?","yes_no","medium","","",No
+"What level of detail is expected in the 'plan_to_share_ipd_description'?","free_text_definitions","low","","",No
+"Is this a foreign key to another record in this same 'studies' table, linking an expanded access study to its parent interventional study?","yes_no","medium","","",No
+"What specifically constitutes an 'fdaaa801_violation'?","free_text_definitions","high","","",No
