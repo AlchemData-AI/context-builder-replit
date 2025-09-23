@@ -480,6 +480,155 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Combined AI context generation and SME question generation
+  app.post("/api/databases/:id/generate-context-and-questions", async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      // Get selected tables first to validate before creating job
+      const tables = await storage.getSelectedTables(id);
+      if (tables.length === 0) {
+        return res.status(400).json({ error: "No tables selected for analysis. Please select tables first." });
+      }
+      
+      const job = await storage.createAnalysisJob({
+        databaseId: id,
+        type: "ai_context", // We'll use the same type for now
+        status: "running",
+        progress: 0,
+        result: null,
+        error: null,
+        startedAt: new Date(),
+        completedAt: null
+      });
+      
+      const results = [];
+
+      for (let i = 0; i < tables.length; i++) {
+        const table = tables[i];
+        
+        try {
+          // Get sample data and columns
+          const sampleData = await schemaAnalyzer.getSampleData(table.id);
+          const columns = await storage.getColumnsByTableId(table.id);
+          
+          // Get statistical analysis for richer context
+          const statisticalResults = await statisticalAnalyzer.analyzeTable(table.id);
+          
+          // Generate schema string
+          const schema = `CREATE TABLE ${table.schema}.${table.name} (\n${columns.map(c => `  ${c.name} ${c.dataType}`).join(',\n')}\n);`;
+          
+          // Helper function to safely parse JSON arrays
+          const safeParseArray = (value: any): any[] => {
+            if (!value) return [];
+            if (Array.isArray(value)) return value;
+            if (typeof value === 'string') {
+              if (value.trim() === '') return [];
+              try {
+                const parsed = JSON.parse(value);
+                return Array.isArray(parsed) ? parsed : [];
+              } catch {
+                return [];
+              }
+            }
+            return [];
+          };
+          
+          // Prepare column data with enhanced information including enum values
+          const columnData = columns.map(c => {
+            const distinctValues = safeParseArray(c.distinctValues);
+            return {
+              name: c.name,
+              dataType: c.dataType,
+              sampleValues: sampleData.map(row => row[c.name]).filter(v => v != null).slice(0, 10),
+              cardinality: c.cardinality ?? undefined,
+              nullPercentage: parseFloat(c.nullPercentage || '0'),
+              distinctValues: c.cardinality && c.cardinality <= 100 ? distinctValues : undefined
+            };
+          });
+          
+          // Use combined Gemini service method (to be implemented)
+          // const contextAndQuestions = await geminiService.generateContextAndQuestions(
+          //   table.name,
+          //   schema,
+          //   sampleData,
+          //   columnData,
+          //   statisticalResults
+          // );
+          
+          // Temporary placeholder until method is implemented
+          const contextAndQuestions = {
+            table: null,
+            columns: []
+          };
+          
+          // Store AI descriptions for table and columns
+          if (contextAndQuestions.table) {
+            // TODO: Store table description when we have table-level AI description field
+          }
+          
+          // Store column descriptions and SME questions
+          for (const columnResult of contextAndQuestions.columns || []) {
+            const column = columns.find(c => c.name === columnResult.column_name);
+            if (!column) continue;
+
+            // Store column AI description
+            await storage.updateColumnStats(column.id, {
+              aiDescription: columnResult.hypothesis
+            });
+
+            // Create SME questions for this column
+            for (const question of columnResult.questions || []) {
+              await storage.createSmeQuestion({
+                tableId: table.id,
+                columnId: column.id,
+                questionType: question.question_type || 'column',
+                questionText: question.question_text,
+                options: question.options ? JSON.stringify(question.options) : null,
+                priority: question.priority || 'medium'
+              });
+            }
+
+            // Add enum values question for low cardinality columns
+            if (columnResult.enum_values && columnResult.enum_values.length > 0) {
+              await storage.createSmeQuestion({
+                tableId: table.id,
+                columnId: column.id,
+                questionType: 'column',
+                questionText: `We found these distinct values in ${columnResult.column_name}: ${columnResult.enum_values.join(', ')}. Please define what each value means.`,
+                priority: 'high'
+              });
+            }
+          }
+          
+          results.push({
+            table: table.name,
+            context: contextAndQuestions.table,
+            columns: contextAndQuestions.columns,
+            questionsGenerated: contextAndQuestions.columns?.reduce((total: number, col: any) => total + (col.questions?.length || 0), 0) || 0
+          });
+          
+          const progress = Math.round(((i + 1) / tables.length) * 100);
+          await storage.updateAnalysisJob(job.id, { progress });
+          
+        } catch (error) {
+          console.error(`Failed to generate context and questions for table ${table.name}:`, error);
+        }
+      }
+
+      await storage.updateAnalysisJob(job.id, {
+        status: "completed",
+        progress: 100,
+        result: JSON.stringify(results),
+        completedAt: new Date()
+      });
+
+      res.json(job);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Context and question generation failed" });
+    }
+  });
+
   // Comprehensive data export endpoint with multiple formats
   app.get("/api/databases/:id/export-data", async (req, res) => {
     try {
