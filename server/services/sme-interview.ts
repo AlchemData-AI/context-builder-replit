@@ -246,38 +246,26 @@ export class SMEInterviewService {
         question: question.questionText,
         questionType: question.questionType,
         priority: question.priority || 'medium',
-        options: question.options || undefined,
+        options: question.options ? JSON.stringify(question.options) : undefined,
         response: question.response || undefined
       };
 
-      switch (question.questionType) {
-        case 'table':
-          export_data.tableQuestions.push({
-            table: table?.name || 'Unknown',
-            ...baseData
-          });
-          break;
-
-        case 'column':
-          export_data.columnQuestions.push({
-            table: table?.name || 'Unknown',
-            column: column?.name || 'Unknown',
-            dataType: column?.dataType || 'Unknown',
-            hypothesis: column?.aiDescription || '',
-            ...baseData
-          });
-          break;
-
-        case 'relationship':
-        case 'ambiguity':
-          export_data.relationshipQuestions.push({
-            fromTable: table?.name || 'Unknown',
-            fromColumn: column?.name || 'Unknown',
-            toTable: 'Multiple', // For ambiguity questions
-            toColumn: 'Multiple',
-            ...baseData
-          });
-          break;
+      // Categorize questions based on whether they have a columnId
+      if (!question.columnId) {
+        // Table-level question
+        export_data.tableQuestions.push({
+          table: table?.name || 'Unknown',
+          ...baseData
+        });
+      } else {
+        // Column-level question
+        export_data.columnQuestions.push({
+          table: table?.name || 'Unknown',
+          column: column?.name || 'Unknown',
+          dataType: column?.dataType || 'Unknown',
+          hypothesis: column?.aiDescription || '',
+          ...baseData
+        });
       }
     }
 

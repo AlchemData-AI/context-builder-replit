@@ -256,9 +256,21 @@ export class DatabaseStorage implements IStorage {
 
   async getQuestionsByDatabaseId(databaseId: string): Promise<SmeQuestion[]> {
     return await db
-      .select()
+      .select({
+        id: smeQuestions.id,
+        tableId: smeQuestions.tableId,
+        columnId: smeQuestions.columnId,
+        questionType: smeQuestions.questionType,
+        questionText: smeQuestions.questionText,
+        options: smeQuestions.options,
+        response: smeQuestions.response,
+        isAnswered: smeQuestions.isAnswered,
+        priority: smeQuestions.priority,
+        createdAt: smeQuestions.createdAt
+      })
       .from(smeQuestions)
-      .where(eq(smeQuestions.tableId, databaseId));
+      .innerJoin(tables, eq(smeQuestions.tableId, tables.id))
+      .where(eq(tables.databaseId, databaseId));
   }
 
   async answerSmeQuestion(questionId: string, response: string): Promise<void> {
