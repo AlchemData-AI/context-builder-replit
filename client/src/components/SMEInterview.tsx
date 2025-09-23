@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import CSVUpload from "@/components/CSVUpload";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 interface SmeQuestion {
   id: string;
@@ -37,6 +38,8 @@ export default function SMEInterview() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [responses, setResponses] = useState<Record<string, string>>({});
+  const [currentPage, setCurrentPage] = useState(0);
+  const questionsPerPage = 10;
 
   // Get database
   const { data: connections = [] } = useQuery({
@@ -265,45 +268,85 @@ export default function SMEInterview() {
                 <p className="text-sm">Click "Generate Questions" or use "Generate Context & Questions" from AI Context Generation to create SME interview questions.</p>
               </div>
             ) : (
-              <ScrollArea className="max-h-96">
-                <div className="space-y-4">
-                  {questions.filter(q => !q.isAnswered).slice(0, 5).map((question) => (
-                    <div 
-                      key={question.id} 
-                      className="p-4 bg-amber-50 border border-amber-200 rounded-lg"
-                      data-testid={`question-${question.id}`}
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-center">
-                          <i className={`${getQuestionTypeIcon(question.questionType)} text-amber-600 mr-2`}></i>
-                          <span className="font-medium text-sm text-amber-800">
-                            {question.questionType.charAt(0).toUpperCase() + question.questionType.slice(1)} Question
-                          </span>
-                        </div>
-                        <span className={`px-2 py-1 rounded text-xs ${getPriorityColor(question.priority)}`}>
-                          {question.priority}
-                        </span>
-                      </div>
-                      <p className="text-sm text-amber-700 mb-3">{question.questionText}</p>
-                      {question.options && (
-                        <div className="mb-3">
-                          <p className="text-sm font-medium mb-1">Options:</p>
-                          <div className="text-sm text-muted-foreground">
-                            {JSON.parse(question.options).map((option: string, index: number) => (
-                              <p key={index}>• {option}</p>
-                            ))}
+              <div>
+                <ScrollArea className="max-h-96 mb-4">
+                  <div className="space-y-4">
+                    {(() => {
+                      const unansweredQuestions = questions.filter(q => !q.isAnswered);
+                      const startIndex = currentPage * questionsPerPage;
+                      const endIndex = startIndex + questionsPerPage;
+                      const paginatedQuestions = unansweredQuestions.slice(startIndex, endIndex);
+                      
+                      return paginatedQuestions.map((question) => (
+                        <div 
+                          key={question.id} 
+                          className="p-4 bg-amber-50 border border-amber-200 rounded-lg"
+                          data-testid={`question-${question.id}`}
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex items-center">
+                              <i className={`${getQuestionTypeIcon(question.questionType)} text-amber-600 mr-2`}></i>
+                              <span className="font-medium text-sm text-amber-800">
+                                {question.questionType.charAt(0).toUpperCase() + question.questionType.slice(1)} Question
+                              </span>
+                            </div>
+                            <span className={`px-2 py-1 rounded text-xs ${getPriorityColor(question.priority)}`}>
+                              {question.priority}
+                            </span>
                           </div>
+                          <p className="text-sm text-amber-700 mb-3">{question.questionText}</p>
+                          {question.options && (
+                            <div className="mb-3">
+                              <p className="text-sm font-medium mb-1">Options:</p>
+                              <div className="text-sm text-muted-foreground">
+                                {JSON.parse(question.options).map((option: string, index: number) => (
+                                  <p key={index}>• {option}</p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      )}
+                      ));
+                    })()}
+                  </div>
+                </ScrollArea>
+                
+                {(() => {
+                  const unansweredQuestions = questions.filter(q => !q.isAnswered);
+                  const totalPages = Math.ceil(unansweredQuestions.length / questionsPerPage);
+                  
+                  return totalPages > 1 && (
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-muted-foreground">
+                        Showing {Math.min(currentPage * questionsPerPage + 1, unansweredQuestions.length)} - {Math.min((currentPage + 1) * questionsPerPage, unansweredQuestions.length)} of {unansweredQuestions.length} questions
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
+                          disabled={currentPage === 0}
+                          data-testid="button-previous-questions"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <span className="text-sm text-muted-foreground">
+                          Page {currentPage + 1} of {totalPages}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setCurrentPage(Math.min(totalPages - 1, currentPage + 1))}
+                          disabled={currentPage >= totalPages - 1}
+                          data-testid="button-next-questions"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                  ))}
-                  {questions.filter(q => !q.isAnswered).length > 5 && (
-                    <p className="text-sm text-muted-foreground text-center">
-                      ... and {questions.filter(q => !q.isAnswered).length - 5} more questions
-                    </p>
-                  )}
-                </div>
-              </ScrollArea>
+                  );
+                })()}
+              </div>
             )}
           </CardContent>
         </Card>

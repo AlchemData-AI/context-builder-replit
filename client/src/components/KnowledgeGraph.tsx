@@ -161,7 +161,12 @@ export default function KnowledgeGraph() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-semibold" data-testid="knowledge-graph-title">Neo4j Knowledge Graph</h2>
+        <div>
+          <h2 className="text-2xl font-semibold" data-testid="knowledge-graph-title">Neo4j Knowledge Graph</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Transform your database schema and AI insights into a hierarchical knowledge graph
+          </p>
+        </div>
         <div className="flex space-x-2">
           <Button 
             variant="outline"
@@ -176,6 +181,7 @@ export default function KnowledgeGraph() {
             onClick={handleBuildGraph}
             disabled={buildGraph.isPending || selectedTables.length === 0}
             data-testid="button-build-graph"
+            title="Creates a comprehensive Neo4j knowledge graph from your database schema, AI-generated context, and SME-validated insights"
           >
             <i className="fas fa-upload mr-2"></i>
             {buildGraph.isPending ? "Building..." : "Build Graph"}
@@ -193,6 +199,21 @@ export default function KnowledgeGraph() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
+            <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <h4 className="text-sm font-semibold text-blue-900 mb-2">What does "Build Graph" do?</h4>
+              <p className="text-xs text-blue-800 mb-2">
+                Creates a comprehensive Neo4j knowledge graph with a four-level hierarchy:
+              </p>
+              <ul className="text-xs text-blue-700 space-y-1">
+                <li>• <strong>Agent Personas</strong> → Business domain groupings</li>
+                <li>• <strong>Tables</strong> → Database entities with AI-generated descriptions</li>
+                <li>• <strong>Columns</strong> → Field-level metadata with business context</li>
+                <li>• <strong>Values</strong> → Sample data for low-cardinality fields</li>
+              </ul>
+              <p className="text-xs text-blue-600 mt-2">
+                Includes SME-validated relationships and AI-generated business context.
+              </p>
+            </div>
             <div>
               <label className="text-sm font-medium text-muted-foreground block mb-2">
                 Neo4j Connection

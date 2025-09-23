@@ -1138,37 +1138,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         allColumns.push(...columns);
       }
       
-      // Convert to CSV format
-      let csvOutput = '';
+      // Create a comprehensive mapping of columns with all context
+      const columnContextMap = new Map();
       
-      // Add AI-Generated Table Context section
-      csvOutput += 'AI-GENERATED TABLE CONTEXT\n';
-      csvOutput += 'Table,Description,Business Purpose,Data Characteristics\n';
-      for (const contextItem of contextItems) {
-        const table = tables.find(t => t.id === contextItem.tableId);
-        const tableDesc = contextItem.tableDesc;
-        if (tableDesc && typeof tableDesc === 'object') {
-          const desc = tableDesc as any;
-          csvOutput += `"${table?.name || 'Unknown'}","${desc.description || ''}","${desc.business_purpose || ''}","${desc.data_characteristics || ''}"\n`;
-        }
-      }
-      csvOutput += '\n';
-      
-      // Add AI-Generated Column Context section
-      csvOutput += 'AI-GENERATED COLUMN CONTEXT\n';
-      csvOutput += 'Table,Column,Data Type,AI Hypothesis,Business Meaning,Data Patterns,Sample Values\n';
+      // Build enhanced column data with AI context
       for (const contextItem of contextItems) {
         const table = tables.find(t => t.id === contextItem.tableId);
         const columnDescs = contextItem.columnDescs;
+        
         if (Array.isArray(columnDescs)) {
           for (const colDesc of columnDescs) {
             const column = allColumns.find(c => c.tableId === contextItem.tableId && c.name === colDesc.column_name);
-            const enumValues = colDesc.enum_values ? colDesc.enum_values.slice(0, 10).join('; ') : '';
-            csvOutput += `"${table?.name || 'Unknown'}","${colDesc.column_name}","${column?.dataType || 'Unknown'}","${colDesc.description || ''}","${colDesc.business_meaning || ''}","${colDesc.data_patterns || ''}","${enumValues}"\n`;
+            const key = `${table?.name || 'Unknown'}:${colDesc.column_name}`;
+            
+            columnContextMap.set(key, {
+              table: table?.name || 'Unknown',
+              column: colDesc.column_name,
+              dataType: column?.dataType || 'Unknown',
+              hypothesis: colDesc.description || '',
+              businessMeaning: colDesc.business_meaning || '',
+              dataPatterns: colDesc.data_patterns || '',
+              sampleValues: colDesc.enum_values ? colDesc.enum_values.slice(0, 5).join('; ') : '',
+              question: null,
+              questionType: '',
+              priority: '',
+              options: '',
+              response: ''
+            });
           }
         }
       }
-      csvOutput += '\n';
+      
+      // Convert to CSV format
+      let csvOutput = '';
       
       // Add Agent Persona questions
       if (csvData.agentPersonaQuestions.length > 0) {
@@ -1190,15 +1192,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         csvOutput += '\n';
       }
       
-      // Add column questions
+      // Enhanced column questions section with full context
+      csvOutput += 'ENHANCED COLUMN ANALYSIS & QUESTIONS\n';
+      csvOutput += 'Table,Column,DataType,AIHypothesis,BusinessMeaning,DataPatterns,SampleValues,Question,QuestionType,Priority,Options,Response\n';
+      
+      // First, add existing column questions with enhanced context
       if (csvData.columnQuestions.length > 0) {
-        csvOutput += 'COLUMN QUESTIONS\n';
-        csvOutput += 'Table,Column,DataType,Hypothesis,Question,Type,Priority,Options,Response\n';
         csvData.columnQuestions.forEach(q => {
-          csvOutput += `"${q.table}","${q.column}","${q.dataType}","${q.hypothesis}","${q.question}","${q.questionType}","${q.priority}","${q.options || ''}","${q.response || ''}"\n`;
+          const key = `${q.table}:${q.column}`;
+          const context = columnContextMap.get(key) || {};
+          
+          csvOutput += `"${q.table}","${q.column}","${q.dataType || context.dataType || ''}","${context.hypothesis || ''}","${context.businessMeaning || ''}","${context.dataPatterns || ''}","${context.sampleValues || ''}","${q.question}","${q.questionType}","${q.priority}","${q.options || ''}","${q.response || ''}"\n`;
+          
+          // Mark this column as processed
+          columnContextMap.delete(key);
         });
-        csvOutput += '\n';
       }
+      
+      // Add remaining columns with AI context but no questions yet
+      for (const [key, context] of columnContextMap) {
+        csvOutput += `"${context.table}","${context.column}","${context.dataType}","${context.hypothesis}","${context.businessMeaning}","${context.dataPatterns}","${context.sampleValues}","","","","",""\n`;
+      }
+      csvOutput += '\n';
       
       // Add relationship questions
       if (csvData.relationshipQuestions.length > 0) {

@@ -134,6 +134,7 @@ export default function AIContextGeneration() {
 
   // Parse results when jobs complete
   if (latestContextJob?.status === 'completed' && latestContextJob.result && !contextResults) {
+    console.log('Parsing context job result:', latestContextJob.result);
     try {
       // Check if result is already parsed object or needs parsing
       let parsed;
