@@ -1125,6 +1125,220 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Updated knowledge graph building function that handles existing graphs
+  async function updateEnhancedKnowledgeGraph(databaseId: string) {
+    console.log('Updating enhanced knowledge graph for database:', databaseId);
+    
+    const namespace = `database_${databaseId}`;
+    const namespaceExists = await neo4jService.checkNamespaceExists(namespace);
+    
+    if (namespaceExists) {
+      console.log('Existing knowledge graph found, performing incremental updates');
+      return await performIncrementalUpdate(databaseId, namespace);
+    } else {
+      console.log('No existing knowledge graph found, creating new graph');
+      return await buildEnhancedKnowledgeGraph(databaseId);
+    }
+  }
+
+  // Incremental update function for existing knowledge graphs
+  async function performIncrementalUpdate(databaseId: string, namespace: string) {
+    console.log('Performing incremental knowledge graph update for database:', databaseId);
+    
+    let stats = await neo4jService.getNamespaceStatistics(namespace);
+    
+    // Get SME questions and answers
+    const smeQuestions = await storage.getQuestionsByDatabaseId(databaseId);
+    const newlyAnsweredQuestions = smeQuestions.filter(q => 
+      q.isAnswered && q.response && q.questionType === 'relationship'
+    );
+    
+    // Update column descriptions with new SME context
+    const contextItems = await storage.getContextsByDatabaseId(databaseId);
+    for (const contextItem of contextItems) {
+      if (contextItem?.columnDescs && Array.isArray(contextItem.columnDescs)) {
+        const columns = await storage.getColumnsByTableId(contextItem.tableId);
+        for (const column of columns) {
+          const columnDesc = contextItem.columnDescs.find(desc => desc.column_name === column.name);
+          if (columnDesc && columnDesc.description) {
+            // Update column description in Neo4j
+            await neo4jService.updateColumnDescription(column.id, columnDesc.description);
+          }
+        }
+      }
+    }
+    
+    // Add new SME-validated relationships 
+    let relationshipsProcessed = 0;
+    for (const question of newlyAnsweredQuestions) {
+      if (question.fromTable && question.fromColumn && question.toTable && question.toColumn) {
+        try {
+          const fromTable = await storage.getTable(question.fromTable);
+          const toTable = await storage.getTable(question.toTable);
+          
+          if (fromTable && toTable) {
+            await neo4jService.createOrUpdateSMEValidatedRelationship({
+              fromTableId: question.fromTable,
+              fromColumnId: question.fromColumn,
+              toTableId: question.toTable,
+              toColumnId: question.toColumn,
+              smeResponse: question.response,
+              questionId: question.id,
+              namespace
+            });
+            relationshipsProcessed++;
+          }
+        } catch (error) {
+          console.warn('Failed to update SME-validated relationship:', error);
+        }
+      }
+    }
+    
+    // Get fresh statistics after updates (don't manually modify counts)
+    const updatedStats = await neo4jService.getNamespaceStatistics(namespace);
+    
+    console.log('Incremental knowledge graph update completed:', {
+      ...updatedStats,
+      relationshipsProcessed: relationshipsProcessed
+    });
+    
+    return updatedStats;
+  }
+
+  // Enhanced knowledge graph building function that incorporates SME responses (for new graphs)
+  async function buildEnhancedKnowledgeGraph(databaseId: string) {
+    console.log('Building enhanced knowledge graph for database:', databaseId);
+    
+    // Create namespace for this database
+    const namespace = `database_${databaseId}`;
+    await neo4jService.createNamespace(namespace);
+    
+    // Get personas and their tables
+    const personas = await storage.getPersonasByDatabaseId(databaseId);
+    
+    let stats = {
+      personaCount: personas.length,
+      tableCount: 0,
+      columnCount: 0,
+      valueCount: 0,
+      relationshipCount: 0
+    };
+    
+    for (const persona of personas) {
+      // Create Agent Persona node
+      await neo4jService.createAgentPersona({
+        id: persona.id,
+        name: persona.name,
+        description: persona.description,
+        keywords: Array.isArray(persona.keywords) ? persona.keywords as string[] : [],
+        namespace
+      });
+      
+      // Get tables for this persona (for now, just get all selected tables)
+      const tables = await storage.getSelectedTables(databaseId);
+      stats.tableCount += tables.length;
+      
+      for (const table of tables) {
+        // Create Table node
+        await neo4jService.createTableNode(persona.id, {
+          id: table.id,
+          name: table.name,
+          schema: table.schema,
+          rowCount: table.rowCount ?? undefined,
+          columnCount: table.columnCount ?? undefined
+        });
+        
+        // Get and create Column nodes with SME context
+        const columns = await storage.getColumnsByTableId(table.id);
+        stats.columnCount += columns.length;
+        
+        // Get AI context for this table to include SME-validated descriptions
+        const contextItem = await storage.getContextByTableId(table.id);
+        
+        for (const column of columns) {
+          // Look for SME-validated column context
+          let enhancedDescription = column.aiDescription;
+          if (contextItem?.columnDescs && Array.isArray(contextItem.columnDescs)) {
+            const columnDesc = contextItem.columnDescs.find(desc => desc.column_name === column.name);
+            if (columnDesc) {
+              enhancedDescription = columnDesc.description || column.aiDescription;
+            }
+          }
+          
+          await neo4jService.createColumnNode(table.id, {
+            id: column.id,
+            name: column.name,
+            dataType: column.dataType,
+            description: enhancedDescription ?? undefined,
+            isNullable: column.isNullable ?? false,
+            cardinality: column.cardinality ?? undefined,
+            nullPercentage: parseFloat(column.nullPercentage || '0')
+          });
+          
+          // Note: Value nodes can be created later when statistical analysis provides top values
+          // For now, skip value nodes in enhanced graph building to avoid database method dependencies
+        }
+      }
+    }
+    
+    // Get SME-validated foreign key relationships and create enhanced relationships
+    const smeQuestions = await storage.getQuestionsByDatabaseId(databaseId);
+    const answeredRelationshipQuestions = smeQuestions.filter(q => 
+      q.isAnswered && q.questionType === 'relationship' && q.response
+    );
+    
+    // Process SME-validated relationships
+    for (const question of answeredRelationshipQuestions) {
+      if (question.fromTable && question.fromColumn && question.toTable && question.toColumn) {
+        try {
+          const fromTable = await storage.getTable(question.fromTable);
+          const toTable = await storage.getTable(question.toTable);
+          
+          if (fromTable && toTable) {
+            // Create enhanced relationship with SME validation
+            await neo4jService.createRelationship({
+              fromTableId: question.fromTable,
+              fromColumnId: question.fromColumn,
+              toTableId: question.toTable,
+              toColumnId: question.toColumn,
+              relationshipType: 'SME_VALIDATED_FOREIGN_KEY',
+              confidence: '1.0', // SME validated = high confidence
+              isValidated: true,
+              metadata: {
+                smeResponse: question.response,
+                questionId: question.id
+              }
+            });
+            stats.relationshipCount++;
+          }
+        } catch (error) {
+          console.warn('Failed to create SME-validated relationship:', error);
+        }
+      }
+    }
+    
+    // Also create traditional foreign key relationships from all tables
+    const allTables = await storage.getSelectedTables(databaseId);
+    for (const table of allTables) {
+      const foreignKeys = await storage.getForeignKeysByTableId(table.id);
+      for (const fk of foreignKeys) {
+        await neo4jService.createRelationship({
+          fromTableId: fk.fromTableId,
+          fromColumnId: fk.fromColumnId,
+          toTableId: fk.toTableId,
+          toColumnId: fk.toColumnId,
+          relationshipType: 'FOREIGN_KEY',
+          confidence: fk.confidence,
+          isValidated: fk.isValidated
+        });
+        stats.relationshipCount++;
+      }
+    }
+    
+    console.log('Enhanced knowledge graph built successfully:', stats);
+    return stats;
+  }
+
   // CSV upload endpoint for SME responses
   app.post("/api/databases/:id/upload-csv", (req, res) => {
     csvUpload.single('csvFile')(req, res, async (err) => {
@@ -1160,11 +1374,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // Get updated progress after processing
         const progress = await smeInterviewService.getInterviewProgress(id);
+
+        // Optionally build knowledge graph if Neo4j connection is available
+        let graphBuildResult: any = null;
+        
+        // Parse form data fields (multer populates req.body for text fields)
+        const buildKnowledgeGraph = req.body?.buildKnowledgeGraph === 'true';
+        const neo4jConnectionId = req.body?.neo4jConnectionId;
+        
+        if (buildKnowledgeGraph && neo4jConnectionId) {
+          try {
+            console.log('Building knowledge graph with connection:', neo4jConnectionId);
+            const neo4jConnection = await storage.getConnection(neo4jConnectionId);
+            if (neo4jConnection) {
+              // Connect to Neo4j
+              const connected = await neo4jService.connect(neo4jConnection.config as any);
+              if (connected) {
+                try {
+                  // Update or build enhanced knowledge graph with SME responses
+                  graphBuildResult = await updateEnhancedKnowledgeGraph(id);
+                  console.log('Knowledge graph updated successfully:', graphBuildResult);
+                } finally {
+                  // Always disconnect after building
+                  await neo4jService.disconnect();
+                }
+              } else {
+                console.warn('Failed to connect to Neo4j');
+              }
+            } else {
+              console.warn('Neo4j connection not found:', neo4jConnectionId);
+            }
+          } catch (graphError) {
+            console.error('Knowledge graph building failed:', graphError);
+            // Don't fail the entire operation if graph building fails
+          }
+        }
         
         res.json({ 
           success: true, 
           message: "CSV responses processed successfully",
-          progress: progress
+          progress: progress,
+          knowledgeGraphBuilt: !!graphBuildResult,
+          graphStats: graphBuildResult || null
         });
       } catch (error) {
         console.error('CSV upload error:', error);

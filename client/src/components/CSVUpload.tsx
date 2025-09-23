@@ -5,8 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Upload, FileText, CheckCircle, AlertCircle } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Upload, FileText, CheckCircle, AlertCircle, Network } from "lucide-react";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
 interface CSVUploadProps {
@@ -24,6 +26,13 @@ interface UploadResponse {
     answeredQuestions: number;
     percentage: number;
   };
+  knowledgeGraphBuilt?: boolean;
+  graphStats?: {
+    personaCount: number;
+    tableCount: number;
+    columnCount: number;
+    relationshipCount: number;
+  };
 }
 
 export default function CSVUpload({ databaseId, onUploadComplete, className, 'data-testid': testId }: CSVUploadProps) {
@@ -32,11 +41,30 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [buildKnowledgeGraph, setBuildKnowledgeGraph] = useState(false);
+  const [selectedNeo4jConnection, setSelectedNeo4jConnection] = useState<string>("");
+
+  // Fetch Neo4j connections for knowledge graph building option
+  const { data: connections = [] } = useQuery({
+    queryKey: ['/api/connections'],
+    queryFn: async () => {
+      const response = await fetch('/api/connections?userId=default-user');
+      return response.json();
+    }
+  });
+
+  const neo4jConnections = connections.filter((c: any) => c.type === 'neo4j' && c.status === 'connected');
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File): Promise<UploadResponse> => {
       const formData = new FormData();
       formData.append('csvFile', file);
+      
+      // Add knowledge graph building options
+      if (buildKnowledgeGraph && selectedNeo4jConnection) {
+        formData.append('buildKnowledgeGraph', 'true');
+        formData.append('neo4jConnectionId', selectedNeo4jConnection);
+      }
 
       const response = await fetch(`/api/databases/${databaseId}/upload-csv`, {
         method: 'POST',
@@ -51,14 +79,27 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
       return response.json();
     },
     onSuccess: (data) => {
+      let description = data.message;
+      
+      // Add knowledge graph build results to the toast
+      if (data.knowledgeGraphBuilt && data.graphStats) {
+        description += ` Knowledge graph built with ${data.graphStats.tableCount} tables, ${data.graphStats.columnCount} columns, and ${data.graphStats.relationshipCount} relationships.`;
+      } else if (buildKnowledgeGraph && !data.knowledgeGraphBuilt) {
+        description += " Note: Knowledge graph building was requested but may have failed - check server logs.";
+      }
+      
       toast({
         title: "Upload Successful",
-        description: data.message,
+        description,
       });
+      
       setSelectedFile(null);
+      setBuildKnowledgeGraph(false);
+      setSelectedNeo4jConnection("");
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
+      
       // Invalidate and refetch SME questions
       queryClient.invalidateQueries({ queryKey: ['/api/databases', databaseId, 'sme-questions'] });
       queryClient.invalidateQueries({ queryKey: ['/api/databases', databaseId, 'sme-progress'] });
@@ -131,9 +172,19 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
   };
 
   const handleUpload = () => {
-    if (selectedFile) {
-      uploadMutation.mutate(selectedFile);
+    if (!selectedFile) return;
+    
+    // Validate knowledge graph building options
+    if (buildKnowledgeGraph && !selectedNeo4jConnection) {
+      toast({
+        title: "Neo4j Connection Required",
+        description: "Please select a Neo4j connection to build the knowledge graph.",
+        variant: "destructive",
+      });
+      return;
     }
+    
+    uploadMutation.mutate(selectedFile);
   };
 
   const handleClearFile = () => {
@@ -254,11 +305,61 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
           </div>
         )}
 
+        {/* Knowledge Graph Building Options */}
+        {neo4jConnections.length > 0 && (
+          <div className="space-y-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="build-knowledge-graph"
+                checked={buildKnowledgeGraph}
+                onCheckedChange={(checked) => setBuildKnowledgeGraph(checked === true)}
+                data-testid="checkbox-build-knowledge-graph"
+              />
+              <Label
+                htmlFor="build-knowledge-graph"
+                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+              >
+                <Network className="inline-block w-4 h-4 mr-2" />
+                Build Knowledge Graph after upload
+              </Label>
+            </div>
+            
+            {buildKnowledgeGraph && (
+              <div className="space-y-2">
+                <Label htmlFor="neo4j-connection">Neo4j Connection</Label>
+                <Select
+                  value={selectedNeo4jConnection}
+                  onValueChange={setSelectedNeo4jConnection}
+                  data-testid="select-neo4j-connection"
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Neo4j connection" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {neo4jConnections.map((conn: any) => (
+                      <SelectItem key={conn.id} value={conn.id}>
+                        {conn.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {buildKnowledgeGraph && !selectedNeo4jConnection && (
+                  <p className="text-sm text-amber-600">Please select a Neo4j connection to build the knowledge graph.</p>
+                )}
+              </div>
+            )}
+            
+            <p className="text-xs text-muted-foreground">
+              Automatically build an enhanced knowledge graph using SME-validated responses and relationships.
+            </p>
+          </div>
+        )}
+
         {/* Info Alert */}
         <Alert>
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            Upload a CSV file containing SME responses to update the knowledge base and build knowledge graphs.
+            Upload a CSV file containing SME responses to update the knowledge base and optionally build knowledge graphs.
             The CSV should include answered questions with their responses.
           </AlertDescription>
         </Alert>

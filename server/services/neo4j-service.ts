@@ -387,6 +387,102 @@ export class Neo4jService {
       await session.close();
     }
   }
+
+  // Knowledge Graph Update Methods for incremental updates
+
+  async checkNamespaceExists(namespace: string): Promise<boolean> {
+    const session = this.getSession();
+    try {
+      const result = await session.run(
+        'MATCH (n:Namespace {name: $namespace}) RETURN count(n) as count',
+        { namespace }
+      );
+      return result.records[0].get('count').toNumber() > 0;
+    } finally {
+      await session.close();
+    }
+  }
+
+  async updateColumnDescription(columnId: string, description: string): Promise<void> {
+    const session = this.getSession();
+    try {
+      await session.run(`
+        MATCH (c:Column {id: $columnId})
+        SET c.description = $description,
+            c.updatedAt = datetime()
+      `, {
+        columnId,
+        description
+      });
+    } finally {
+      await session.close();
+    }
+  }
+
+  async createOrUpdateSMEValidatedRelationship(relationship: {
+    fromTableId: string;
+    fromColumnId: string;
+    toTableId: string;
+    toColumnId: string;
+    smeResponse: string;
+    questionId: string;
+    namespace: string;
+  }): Promise<void> {
+    const session = this.getSession();
+    try {
+      await session.run(`
+        MATCH (fromTable:Table {id: $fromTableId})
+        MATCH (toTable:Table {id: $toTableId})
+        MATCH (fromCol:Column {id: $fromColumnId})
+        MATCH (toCol:Column {id: $toColumnId})
+        MERGE (fromTable)-[r:SME_VALIDATED_FK {namespace: $namespace, questionId: $questionId}]->(toTable)
+        SET r.confidence = 1.0,
+            r.isValidated = true,
+            r.smeResponse = $smeResponse,
+            r.fromColumnId = $fromColumnId,
+            r.toColumnId = $toColumnId,
+            r.updatedAt = datetime()
+      `, relationship);
+    } finally {
+      await session.close();
+    }
+  }
+
+  async getNamespaceStatistics(namespace: string): Promise<{
+    personaCount: number;
+    tableCount: number;
+    columnCount: number;
+    valueCount: number;
+    relationshipCount: number;
+  }> {
+    const session = this.getSession();
+    try {
+      const result = await session.run(`
+        MATCH (p:AgentPersona {namespace: $namespace})
+        OPTIONAL MATCH (p)-[:CONTAINS]->(t:Table)
+        OPTIONAL MATCH (t)-[:HAS_COLUMN]->(c:Column)
+        OPTIONAL MATCH (c)-[:HAS_VALUE]->(v:Value)
+        OPTIONAL MATCH ()-[r {namespace: $namespace}]->()
+        RETURN 
+          COUNT(DISTINCT p) as personaCount,
+          COUNT(DISTINCT t) as tableCount,
+          COUNT(DISTINCT c) as columnCount,
+          COUNT(DISTINCT v) as valueCount,
+          COUNT(DISTINCT r) as relationshipCount
+      `, { namespace });
+      
+      const record = result.records[0];
+      return {
+        personaCount: record.get('personaCount').toNumber(),
+        tableCount: record.get('tableCount').toNumber(),
+        columnCount: record.get('columnCount').toNumber(),
+        valueCount: record.get('valueCount').toNumber(),
+        relationshipCount: record.get('relationshipCount').toNumber()
+      };
+    } finally {
+      await session.close();
+    }
+  }
 }
 
 export const neo4jService = new Neo4jService();
