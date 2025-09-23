@@ -32,7 +32,7 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
   const [connections, setConnections] = useState({
     postgresql: { host: "", port: "5432", database: "", username: "", password: "" },
     gemini: { apiKey: "" },
-    neo4j: { uri: "", username: "", password: "" }
+    neo4j: { uri: "", username: "", password: "", database: "" }
   });
 
   // Fetch existing connections
@@ -121,7 +121,8 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
         connectionConfig = {
           uri: neo4jConfig.uri,
           username: neo4jConfig.username,
-          password: neo4jConfig.password
+          password: neo4jConfig.password,
+          database: 'neo4j'
         };
         break;
     }
@@ -275,7 +276,11 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
             
             <div className="flex space-x-2">
               <Button
-                onClick={() => handleConnectionSave('postgresql')}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleConnectionSave('postgresql');
+                }}
                 disabled={createConnection.isPending}
                 className="flex-1"
                 data-testid="button-save-postgresql"
@@ -284,7 +289,11 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
               </Button>
               {getConnectionByType('postgresql') && (
                 <Button
-                  onClick={() => testConnection.mutate(getConnectionByType('postgresql')!.id)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    testConnection.mutate(getConnectionByType('postgresql')!.id);
+                  }}
                   disabled={testConnection.isPending}
                   variant="outline"
                   data-testid="button-test-postgresql"
@@ -331,7 +340,11 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
             
             <div className="flex space-x-2">
               <Button
-                onClick={() => handleConnectionSave('gemini')}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleConnectionSave('gemini');
+                }}
                 disabled={createConnection.isPending}
                 className="flex-1"
                 data-testid="button-save-gemini"
@@ -340,7 +353,11 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
               </Button>
               {getConnectionByType('gemini') && (
                 <Button
-                  onClick={() => testConnection.mutate(getConnectionByType('gemini')!.id)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    testConnection.mutate(getConnectionByType('gemini')!.id);
+                  }}
                   disabled={testConnection.isPending}
                   variant="outline"
                   data-testid="button-test-gemini"
@@ -413,7 +430,11 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
             
             <div className="flex space-x-2">
               <Button
-                onClick={() => handleConnectionSave('neo4j')}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleConnectionSave('neo4j');
+                }}
                 disabled={createConnection.isPending}
                 className="flex-1"
                 data-testid="button-save-neo4j"
@@ -422,7 +443,11 @@ export default function ConnectionValidator({ onConnectionStatus }: ConnectionVa
               </Button>
               {getConnectionByType('neo4j') && (
                 <Button
-                  onClick={() => testConnection.mutate(getConnectionByType('neo4j')!.id)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    testConnection.mutate(getConnectionByType('neo4j')!.id);
+                  }}
                   disabled={testConnection.isPending}
                   variant="outline"
                   data-testid="button-test-neo4j"
