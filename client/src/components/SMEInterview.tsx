@@ -299,9 +299,21 @@ export default function SMEInterview() {
                             <div className="mb-3">
                               <p className="text-sm font-medium mb-1">Options:</p>
                               <div className="text-sm text-muted-foreground">
-                                {JSON.parse(question.options).map((option: string, index: number) => (
-                                  <p key={index}>• {option}</p>
-                                ))}
+                                {(() => {
+                                  try {
+                                    // Try to parse as JSON array
+                                    const parsedOptions = JSON.parse(question.options);
+                                    if (Array.isArray(parsedOptions)) {
+                                      return parsedOptions.map((option: string, index: number) => (
+                                        <p key={index}>• {option}</p>
+                                      ));
+                                    }
+                                  } catch (e) {
+                                    // If JSON parsing fails, treat as plain text
+                                  }
+                                  // Fallback: display as plain text
+                                  return <p>• {question.options}</p>;
+                                })()}
                               </div>
                             </div>
                           )}
