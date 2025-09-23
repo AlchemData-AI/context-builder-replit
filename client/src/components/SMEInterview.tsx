@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import CSVUpload from "@/components/CSVUpload";
 
 interface SmeQuestion {
   id: string;
@@ -420,6 +421,20 @@ export default function SMEInterview() {
             )}
           </CardContent>
         </Card>
+
+        {/* CSV Upload Section */}
+        {database && (
+          <CSVUpload 
+            databaseId={database.id}
+            onUploadComplete={(progress) => {
+              toast({
+                title: "Knowledge Base Updated",
+                description: `${progress.answeredQuestions}/${progress.totalQuestions} questions now answered (${Math.round(progress.percentage)}%)`,
+              });
+            }}
+            data-testid="csv-upload-section"
+          />
+        )}
       </div>
     </div>
   );
