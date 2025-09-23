@@ -95,10 +95,7 @@ export default function AIContextGeneration() {
       return response.json();
     },
     onSuccess: (job) => {
-      toast({ 
-        title: "Context generation started", 
-        description: "AI is generating descriptions and SME questions for your data..." 
-      });
+      toast({ title: "Context generation started", description: "AI is analyzing your data..." });
     },
     onError: (error: Error) => {
       toast({ title: "Context generation failed", description: error.message, variant: "destructive" });
@@ -201,7 +198,7 @@ export default function AIContextGeneration() {
             data-testid="button-generate-context"
           >
             <i className="fas fa-brain mr-2"></i>
-            {latestContextJob?.status === 'running' ? "Generating..." : "Generate Context & SME Questions"}
+            {latestContextJob?.status === 'running' ? "Generating..." : "Generate Context"}
           </Button>
         </div>
       </div>
@@ -249,7 +246,7 @@ export default function AIContextGeneration() {
                   <div className="text-center py-8 text-muted-foreground">
                     {latestContextJob?.status === 'running' 
                       ? "Generating table descriptions..." 
-                      : "Click 'Generate Context & SME Questions' to analyze tables with AI"}
+                      : "Click 'Generate Context' to analyze tables with AI"}
                   </div>
                 ) : (
                   <ScrollArea className="max-h-96">
