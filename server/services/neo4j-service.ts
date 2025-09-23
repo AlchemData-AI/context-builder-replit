@@ -213,7 +213,8 @@ export class Neo4jService {
       await session.run(`
         MATCH (c:Column {id: $columnId})
         MERGE (v:Value {id: $valueId})
-        SET v.value = $value,
+        SET v.name = $value,
+            v.value = $value,
             v.frequency = $frequency,
             v.aiContext = $aiContext,
             v.aiHypothesis = $aiHypothesis,
