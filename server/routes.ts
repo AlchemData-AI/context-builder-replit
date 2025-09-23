@@ -200,6 +200,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Table not found" });
       }
 
+      // Only allow analysis on selected tables
+      if (!table.isSelected) {
+        return res.status(400).json({ error: "Cannot analyze unselected table. Please select the table first." });
+      }
+
+      // Log the analysis request for debugging
+      console.log(`Starting statistical analysis for table: ${table.name} (${id}) in database: ${table.databaseId}`);
+      console.log(`Table selected: ${table.isSelected}`)
+
       const job = await storage.createAnalysisJob({
         databaseId: table.databaseId,
         type: "statistical",
@@ -510,6 +519,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(job);
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch job" });
+    }
+  });
+
+  // Cancel a running analysis job
+  app.post("/api/jobs/:id/cancel", async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const result = await storage.updateAnalysisJob(id, {
+        status: "cancelled",
+        error: "Job cancelled by user",
+        completedAt: new Date()
+      });
+      
+      console.log(`Job ${id} cancelled by user`);
+      res.json({ success: true, message: "Job cancelled successfully" });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to cancel job" });
     }
   });
 
