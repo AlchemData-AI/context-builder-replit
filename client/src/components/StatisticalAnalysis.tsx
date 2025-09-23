@@ -141,25 +141,61 @@ export default function StatisticalAnalysis() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-semibold" data-testid="statistical-title">Statistical Analysis Engine</h2>
         <div className="flex space-x-2">
-          <Button 
-            variant="outline"
-            onClick={() => {
-              // Export analysis results as JSON
-              if (summary) {
-                const blob = new Blob([JSON.stringify(summary, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'statistical-analysis.json';
-                a.click();
-                URL.revokeObjectURL(url);
-              }
-            }}
-            data-testid="button-export-json"
-          >
-            <i className="fas fa-download mr-2"></i>
-            Export JSON
-          </Button>
+          <div className="flex space-x-2">
+            <Button 
+              variant="outline"
+              onClick={() => {
+                // Export analysis results as JSON
+                if (summary) {
+                  const blob = new Blob([JSON.stringify(summary, null, 2)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'statistical-analysis.json';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }
+              }}
+              data-testid="button-export-json"
+            >
+              <i className="fas fa-download mr-2"></i>
+              Export Analysis
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => {
+                if (database) {
+                  const url = `/api/databases/${database.id}/export-data?format=json`;
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${database.name}-complete-export.json`;
+                  a.click();
+                  toast({ title: "Download started", description: "Complete database export (JSON)" });
+                }
+              }}
+              data-testid="button-export-complete-json"
+            >
+              <i className="fas fa-file-export mr-2"></i>
+              Complete JSON
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => {
+                if (database) {
+                  const url = `/api/databases/${database.id}/export-data?format=csv`;
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${database.name}-complete-export.csv`;
+                  a.click();
+                  toast({ title: "Download started", description: "Complete database export (CSV)" });
+                }
+              }}
+              data-testid="button-export-complete-csv"
+            >
+              <i className="fas fa-file-csv mr-2"></i>
+              Complete CSV
+            </Button>
+          </div>
           <Button 
             onClick={runAllAnalysis}
             disabled={runAnalysis.isPending || runningJobs.length > 0}

@@ -480,6 +480,203 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Comprehensive data export endpoint with multiple formats
+  app.get("/api/databases/:id/export-data", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const format = req.query.format as string || 'json';
+      
+      // Get all data for this database
+      const database = await storage.getDatabase(id);
+      if (!database) {
+        return res.status(404).json({ error: "Database not found" });
+      }
+      
+      const tables = await storage.getTablesByDatabaseId(id);
+      const selectedTables = tables.filter(t => t.isSelected);
+      const personas = await storage.getPersonasByDatabaseId(id);
+      const analysisJobs = await storage.getAnalysisJobs(id);
+      const smeQuestions = await storage.getQuestionsByDatabaseId(id);
+      
+      // Get detailed column and foreign key data
+      const allTableData = await Promise.all(tables.map(async (table) => {
+        const columns = await storage.getColumnsByTableId(table.id);
+        const foreignKeys = await storage.getForeignKeysByTableId(table.id);
+        return { ...table, columns, foreignKeys };
+      }));
+      
+      const exportData = {
+        database: {
+          id: database.id,
+          name: database.name,
+          schema: database.schema,
+          exported_at: new Date().toISOString()
+        },
+        summary: {
+          total_tables: tables.length,
+          selected_tables: selectedTables.length,
+          total_columns: allTableData.reduce((sum, t) => sum + t.columns.length, 0),
+          analysis_jobs: analysisJobs.length,
+          completed_jobs: analysisJobs.filter(j => j.status === 'completed').length,
+          sme_questions: smeQuestions.length,
+          answered_questions: smeQuestions.filter(q => q.isAnswered).length
+        },
+        tables: allTableData.map(table => ({
+          id: table.id,
+          name: table.name,
+          schema: table.schema,
+          selected: table.isSelected,
+          row_count: table.rowCount,
+          column_count: table.columnCount,
+          sample_size: table.sampleSize,
+          columns: table.columns.map(col => ({
+            name: col.name,
+            data_type: col.dataType,
+            is_nullable: col.isNullable,
+            is_unique: col.isUnique,
+            cardinality: col.cardinality,
+            null_percentage: col.nullPercentage,
+            min_value: col.minValue,
+            max_value: col.maxValue,
+            distinct_values: col.distinctValues,
+            ai_description: col.aiDescription,
+            sme_validated: col.smeValidated
+          })),
+          foreign_keys: table.foreignKeys.map(fk => ({
+            from_column: fk.fromColumnId,
+            to_table: allTableData.find(t => t.id === fk.toTableId)?.name,
+            to_column: fk.toColumnId,
+            confidence: fk.confidence,
+            validated: fk.isValidated
+          }))
+        })),
+        statistical_analysis: {
+          low_cardinality_columns: allTableData.flatMap(t => 
+            t.columns.filter(c => c.cardinality && c.cardinality < 50)
+              .map(c => ({ table: t.name, column: c.name, cardinality: c.cardinality }))
+          ),
+          high_null_columns: allTableData.flatMap(t => 
+            t.columns.filter(c => c.nullPercentage && parseFloat(c.nullPercentage) > 40)
+              .map(c => ({ table: t.name, column: c.name, null_percentage: c.nullPercentage }))
+          ),
+          potential_join_columns: allTableData.flatMap(t => 
+            t.columns.filter(c => c.name.toLowerCase().includes('id') || c.isUnique)
+              .map(c => ({ table: t.name, column: c.name, data_type: c.dataType, is_unique: c.isUnique }))
+          )
+        },
+        agent_personas: personas,
+        analysis_jobs: analysisJobs.map(job => ({
+          id: job.id,
+          type: job.type,
+          status: job.status,
+          progress: job.progress,
+          result: job.result,
+          error: job.error,
+          started_at: job.startedAt,
+          completed_at: job.completedAt
+        })),
+        sme_questions: smeQuestions.map(q => ({
+          id: q.id,
+          table: tables.find(t => t.id === q.tableId)?.name,
+          column: allTableData.flatMap(t => t.columns).find(c => c.id === q.columnId)?.name,
+          question_type: q.questionType,
+          question_text: q.questionText,
+          options: q.options,
+          response: q.response,
+          is_answered: q.isAnswered,
+          priority: q.priority
+        }))
+      };
+      
+      if (format === 'csv') {
+        // Helper function to escape CSV values
+        const escapeCSV = (value: any): string => {
+          if (value === null || value === undefined) return '';
+          const str = String(value);
+          if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+            return `"${str.replace(/"/g, '""')}"`;
+          }
+          return str;
+        };
+        
+        // Generate comprehensive CSV export
+        let csvOutput = `DATABASE EXPORT - ${database.name}\n`;
+        csvOutput += `Exported: ${new Date().toISOString()}\n\n`;
+        
+        // Summary section
+        csvOutput += 'SUMMARY\n';
+        csvOutput += 'Metric,Value\n';
+        csvOutput += `Total Tables,${exportData.summary.total_tables}\n`;
+        csvOutput += `Selected Tables,${exportData.summary.selected_tables}\n`;
+        csvOutput += `Total Columns,${exportData.summary.total_columns}\n`;
+        csvOutput += `Analysis Jobs,${exportData.summary.analysis_jobs}\n`;
+        csvOutput += `Completed Jobs,${exportData.summary.completed_jobs}\n`;
+        csvOutput += `SME Questions,${exportData.summary.sme_questions}\n`;
+        csvOutput += `Answered Questions,${exportData.summary.answered_questions}\n\n`;
+        
+        // Tables and Columns
+        csvOutput += 'TABLES AND COLUMNS\n';
+        csvOutput += 'Table,Column,DataType,IsNullable,IsUnique,Cardinality,NullPercentage,MinValue,MaxValue,AIDescription,SMEValidated,Selected\n';
+        exportData.tables.forEach(table => {
+          table.columns.forEach(col => {
+            csvOutput += `${escapeCSV(table.name)},${escapeCSV(col.name)},${escapeCSV(col.data_type)},${escapeCSV(col.is_nullable)},${escapeCSV(col.is_unique)},${escapeCSV(col.cardinality)},${escapeCSV(col.null_percentage)},${escapeCSV(col.min_value)},${escapeCSV(col.max_value)},${escapeCSV(col.ai_description)},${escapeCSV(col.sme_validated)},${escapeCSV(table.selected)}\n`;
+          });
+        });
+        csvOutput += '\n';
+        
+        // Statistical insights
+        if (exportData.statistical_analysis.low_cardinality_columns.length > 0) {
+          csvOutput += 'LOW CARDINALITY COLUMNS (< 50 unique values)\n';
+          csvOutput += 'Table,Column,Cardinality\n';
+          exportData.statistical_analysis.low_cardinality_columns.forEach(item => {
+            csvOutput += `${escapeCSV(item.table)},${escapeCSV(item.column)},${escapeCSV(item.cardinality)}\n`;
+          });
+          csvOutput += '\n';
+        }
+        
+        if (exportData.statistical_analysis.high_null_columns.length > 0) {
+          csvOutput += 'HIGH NULL COLUMNS (> 40% nulls)\n';
+          csvOutput += 'Table,Column,NullPercentage\n';
+          exportData.statistical_analysis.high_null_columns.forEach(item => {
+            csvOutput += `${escapeCSV(item.table)},${escapeCSV(item.column)},${escapeCSV(item.null_percentage)}\n`;
+          });
+          csvOutput += '\n';
+        }
+        
+        // Analysis jobs results
+        if (exportData.analysis_jobs.length > 0) {
+          csvOutput += 'ANALYSIS JOBS\n';
+          csvOutput += 'Type,Status,Progress,StartedAt,CompletedAt,Error\n';
+          exportData.analysis_jobs.forEach(job => {
+            csvOutput += `${escapeCSV(job.type)},${escapeCSV(job.status)},${escapeCSV(job.progress)}%,${escapeCSV(job.started_at)},${escapeCSV(job.completed_at)},${escapeCSV(job.error)}\n`;
+          });
+          csvOutput += '\n';
+        }
+        
+        // SME Questions
+        if (exportData.sme_questions.length > 0) {
+          csvOutput += 'SME QUESTIONS\n';
+          csvOutput += 'Table,Column,QuestionType,Question,Priority,Response,IsAnswered\n';
+          exportData.sme_questions.forEach(q => {
+            csvOutput += `${escapeCSV(q.table)},${escapeCSV(q.column)},${escapeCSV(q.question_type)},${escapeCSV(q.question_text)},${escapeCSV(q.priority)},${escapeCSV(q.response)},${escapeCSV(q.is_answered)}\n`;
+          });
+        }
+        
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${database.name}-complete-export.csv"`);
+        res.send(csvOutput);
+      } else {
+        // JSON export
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename=${database.name}-complete-export.json`);
+        res.json(exportData);
+      }
+    } catch (error) {
+      console.error('Export error:', error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "Data export failed" });
+    }
+  });
+
   app.get("/api/databases/:id/export-csv", async (req, res) => {
     try {
       const { id } = req.params;

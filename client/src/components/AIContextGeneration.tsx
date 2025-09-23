@@ -41,11 +41,16 @@ interface JoinSuggestion {
   relationship_type: string;
 }
 
+interface JoinResult extends JoinSuggestion {
+  message?: string;
+  error?: string;
+}
+
 export default function AIContextGeneration() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'tables' | 'columns' | 'joins'>('tables');
   const [contextResults, setContextResults] = useState<any>(null);
-  const [joinResults, setJoinResults] = useState<JoinSuggestion[]>([]);
+  const [joinResults, setJoinResults] = useState<JoinResult[]>([]);
 
   // Get database
   const { data: connections = [] } = useQuery({
@@ -119,17 +124,38 @@ export default function AIContextGeneration() {
   // Parse results when jobs complete
   if (latestContextJob?.status === 'completed' && latestContextJob.result && !contextResults) {
     try {
-      setContextResults(JSON.parse(latestContextJob.result));
+      const parsed = JSON.parse(latestContextJob.result);
+      // Only set results if parsing succeeded and we got valid data
+      if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+        setContextResults(parsed);
+      } else {
+        console.warn('Context job completed but returned empty/invalid results - this may be due to API quota limits');
+        // Set fallback message for quota issues
+        setContextResults({
+          message: "AI context generation completed with limited results due to API quota constraints. Statistical analysis is still available."
+        });
+      }
     } catch (e) {
-      console.error('Failed to parse context results:', e);
+      console.error('Failed to parse context results:', latestContextJob.result, e);
+      // Set fallback for parsing errors
+      setContextResults({
+        error: "Failed to parse AI context results. The job completed but data format was unexpected."
+      });
     }
   }
 
   if (latestJoinJob?.status === 'completed' && latestJoinJob.result && joinResults.length === 0) {
     try {
-      setJoinResults(JSON.parse(latestJoinJob.result));
+      const parsed = JSON.parse(latestJoinJob.result);
+      if (parsed && Array.isArray(parsed) && parsed.length > 0) {
+        setJoinResults(parsed);
+      } else {
+        console.warn('Join analysis completed but found no relationships');
+        setJoinResults([{ message: "No potential joins detected in the selected tables" }]);
+      }
     } catch (e) {
-      console.error('Failed to parse join results:', e);
+      console.error('Failed to parse join results:', latestJoinJob.result, e);
+      setJoinResults([{ error: "Failed to parse join analysis results" }]);
     }
   }
 

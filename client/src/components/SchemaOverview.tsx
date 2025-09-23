@@ -313,6 +313,44 @@ export default function SchemaOverview() {
               >
                 Analyze Selected Tables ({selectedTablesCount})
               </Button>
+              
+              {/* Download buttons */}
+              <div className="flex space-x-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    if (database) {
+                      const url = `/api/databases/${database.id}/export-data?format=json`;
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `${database.name}-complete-export.json`;
+                      a.click();
+                      toast({ title: "Download started", description: "Complete database analysis (JSON format)" });
+                    }
+                  }}
+                  data-testid="button-download-json"
+                >
+                  <i className="fas fa-download mr-2"></i>
+                  Download JSON
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    if (database) {
+                      const url = `/api/databases/${database.id}/export-data?format=csv`;
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `${database.name}-complete-export.csv`;
+                      a.click();
+                      toast({ title: "Download started", description: "Complete database analysis (CSV format)" });
+                    }
+                  }}
+                  data-testid="button-download-csv"
+                >
+                  <i className="fas fa-file-csv mr-2"></i>
+                  Download CSV
+                </Button>
+              </div>
               <div className="text-sm text-muted-foreground">
                 Use Ctrl+Click to select multiple tables
               </div>
