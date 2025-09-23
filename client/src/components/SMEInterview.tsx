@@ -267,7 +267,7 @@ export default function SMEInterview() {
             {questions.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <p>No questions generated yet.</p>
-                <p className="text-sm">Click "Generate Questions" to create SME interview questions.</p>
+                <p className="text-sm">Click "Generate Questions" or use "Generate Context & Questions" from AI Context Generation to create SME interview questions.</p>
               </div>
             ) : (
               <ScrollArea className="max-h-96">

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -48,6 +48,7 @@ interface JoinResult extends JoinSuggestion {
 
 export default function AIContextGeneration() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'tables' | 'columns' | 'joins'>('tables');
   const [contextResults, setContextResults] = useState<any>(null);
   const [joinResults, setJoinResults] = useState<JoinResult[]>([]);
@@ -88,14 +89,17 @@ export default function AIContextGeneration() {
     refetchInterval: 2000
   });
 
-  // Generate AI context mutation
+  // Generate AI context and SME questions mutation (combined)
   const generateContext = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest('POST', `/api/databases/${database.id}/generate-context`);
+      const response = await apiRequest('POST', `/api/databases/${database.id}/generate-context-and-questions`);
       return response.json();
     },
     onSuccess: (job) => {
-      toast({ title: "Context generation started", description: "AI is analyzing your data..." });
+      toast({ title: "Context & Questions generation started", description: "AI is analyzing your data and generating SME questions..." });
+      // Invalidate SME queries when job starts to ensure fresh data when it completes
+      queryClient.invalidateQueries({ queryKey: ['/api/databases', database?.id, 'sme-questions'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/databases', database?.id, 'sme-progress'] });
     },
     onError: (error: Error) => {
       toast({ title: "Context generation failed", description: error.message, variant: "destructive" });
@@ -128,6 +132,9 @@ export default function AIContextGeneration() {
       // Only set results if parsing succeeded and we got valid data
       if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
         setContextResults(parsed);
+        // Invalidate SME queries when context job completes to show newly generated questions
+        queryClient.invalidateQueries({ queryKey: ['/api/databases', database?.id, 'sme-questions'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/databases', database?.id, 'sme-progress'] });
       } else {
         console.warn('Context job completed but returned empty/invalid results - this may be due to API quota limits');
         // Set fallback message for quota issues
@@ -198,7 +205,7 @@ export default function AIContextGeneration() {
             data-testid="button-generate-context"
           >
             <i className="fas fa-brain mr-2"></i>
-            {latestContextJob?.status === 'running' ? "Generating..." : "Generate Context"}
+            {latestContextJob?.status === 'running' ? "Generating..." : "Generate Context & Questions"}
           </Button>
         </div>
       </div>
@@ -245,8 +252,8 @@ export default function AIContextGeneration() {
                 {!contextResults || !contextResults.length ? (
                   <div className="text-center py-8 text-muted-foreground">
                     {latestContextJob?.status === 'running' 
-                      ? "Generating table descriptions..." 
-                      : "Click 'Generate Context' to analyze tables with AI"}
+                      ? "Generating table descriptions and SME questions..." 
+                      : "Click 'Generate Context & Questions' to analyze tables with AI"}
                   </div>
                 ) : (
                   <ScrollArea className="max-h-96">
@@ -449,15 +456,15 @@ export default function AIContextGeneration() {
             <div className="space-y-1" data-testid="ai-processing-log">
               {latestContextJob?.status === 'running' && (
                 <>
-                  <div className="text-blue-600">[{new Date().toLocaleTimeString()}] Started AI context generation</div>
+                  <div className="text-blue-600">[{new Date().toLocaleTimeString()}] Started AI context & question generation</div>
                   <div className="text-blue-600">[{new Date().toLocaleTimeString()}] Gemini API calls in progress...</div>
                   <div className="text-blue-600">[{new Date().toLocaleTimeString()}] Progress: {latestContextJob.progress}%</div>
                 </>
               )}
               {latestContextJob?.status === 'completed' && (
                 <>
-                  <div className="text-emerald-600">[{new Date().toLocaleTimeString()}] Context generation completed</div>
-                  <div className="text-blue-600">[{new Date().toLocaleTimeString()}] Generated descriptions for all tables</div>
+                  <div className="text-emerald-600">[{new Date().toLocaleTimeString()}] Context & question generation completed</div>
+                  <div className="text-blue-600">[{new Date().toLocaleTimeString()}] Generated descriptions and SME questions for all tables</div>
                 </>
               )}
               {latestJoinJob?.status === 'running' && (
