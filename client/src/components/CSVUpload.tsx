@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Upload, FileText, CheckCircle, AlertCircle, Network, Users, Plus, X } from "lucide-react";
+import { Upload, FileText, CheckCircle, AlertCircle, Network, Users, Plus, X, Sparkles } from "lucide-react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
@@ -64,7 +64,6 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [buildKnowledgeGraph, setBuildKnowledgeGraph] = useState(false);
-  const [selectedNeo4jConnection, setSelectedNeo4jConnection] = useState<string>("");
   const [definePersonas, setDefinePersonas] = useState(false);
   const [personas, setPersonas] = useState<PersonaDefinition[]>([]);
 
@@ -85,9 +84,8 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
       formData.append('csvFile', file);
       
       // Add knowledge graph building options
-      if (buildKnowledgeGraph && selectedNeo4jConnection) {
+      if (buildKnowledgeGraph) {
         formData.append('buildKnowledgeGraph', 'true');
-        formData.append('neo4jConnectionId', selectedNeo4jConnection);
       }
       
       // Add persona definitions
@@ -149,7 +147,6 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
       
       setSelectedFile(null);
       setBuildKnowledgeGraph(false);
-      setSelectedNeo4jConnection("");
       setDefinePersonas(false);
       setPersonas([]);
       if (fileInputRef.current) {
@@ -253,10 +250,10 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
     if (!selectedFile) return;
     
     // Validate knowledge graph building options
-    if (buildKnowledgeGraph && !selectedNeo4jConnection) {
+    if (buildKnowledgeGraph && neo4jConnections.length === 0) {
       toast({
         title: "Neo4j Connection Required",
-        description: "Please select a Neo4j connection to build the knowledge graph.",
+        description: "No connected Neo4j instance found. Please configure a Neo4j connection first.",
         variant: "destructive",
       });
       return;
@@ -402,25 +399,18 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
             {buildKnowledgeGraph && (
               <div className="space-y-2">
                 <Label htmlFor="neo4j-connection">Neo4j Connection</Label>
-                <Select
-                  value={selectedNeo4jConnection}
-                  onValueChange={setSelectedNeo4jConnection}
-                  data-testid="select-neo4j-connection"
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Neo4j connection" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {neo4jConnections.map((conn: any) => (
-                      <SelectItem key={conn.id} value={conn.id}>
-                        {conn.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {buildKnowledgeGraph && !selectedNeo4jConnection && (
-                  <p className="text-sm text-amber-600">Please select a Neo4j connection to build the knowledge graph.</p>
-                )}
+                <div className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md" data-testid="auto-neo4j-connection">
+                  <div className="flex items-center text-sm">
+                    <Sparkles className="w-4 h-4 mr-2 text-blue-500" />
+                    <span className="text-gray-700 dark:text-gray-300">Automatically selected based on environment</span>
+                  </div>
+                  {neo4jConnections.length > 0 && (
+                    <div className="flex items-center mt-1 text-xs text-green-600">
+                      <CheckCircle className="w-3 h-3 mr-1" />
+                      <span>Connected to: {neo4jConnections[0].name}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             
