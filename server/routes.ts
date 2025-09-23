@@ -1156,25 +1156,159 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       
-      // Simple approach: just get questions and export them quickly
-      const questions = await storage.getQuestionsByDatabaseId(id);
+      // Get database info
+      const database = await storage.getDatabase(id);
+      if (!database) {
+        return res.status(404).json({ error: "Database not found" });
+      }
       
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=sme-questions.csv');
+      // Helper function to safely escape CSV values
+      const safeCSV = (value: any) => {
+        let str = '';
+        if (value === null || value === undefined) {
+          str = '';
+        } else if (typeof value === 'string') {
+          str = value;
+        } else if (typeof value === 'object') {
+          str = JSON.stringify(value);
+        } else {
+          str = String(value);
+        }
+        
+        // Escape quotes and wrap in quotes for CSV
+        const escaped = str.replace(/"/g, '""');
+        
+        // Prevent CSV injection by prefixing formula characters
+        if (escaped.match(/^[=+\-@]/)) {
+          return `"'${escaped}"`;
+        }
+        
+        return `"${escaped}"`;
+      };
       
-      // Simple CSV format
-      let csvOutput = 'Question,Type,Priority,Options,Response,IsAnswered\n';
+      // Gather all data
+      const tables = await storage.getTablesByDatabaseId(id);
+      const contextItems = await storage.getContextsByDatabaseId(id);
+      const allQuestions = await storage.getQuestionsByDatabaseId(id);
       
-      questions.forEach(q => {
-        const cleanText = (text: string | null | undefined) => {
-          const str = typeof text === 'string' ? text : (text || '').toString();
-          return `"${str.replace(/"/g, '""')}"`;
-        };
-        csvOutput += `${cleanText(q.questionText)},${cleanText(q.questionType)},${cleanText(q.priority || 'medium')},${cleanText(q.options)},${cleanText(q.response)},${q.isAnswered ? 'Yes' : 'No'}\n`;
+      // Create context lookup
+      const contextByTableId = new Map();
+      contextItems.forEach(ctx => {
+        contextByTableId.set(ctx.tableId, ctx);
       });
       
+      // Group questions by table and column
+      const questionsByTable = new Map();
+      const questionsByColumn = new Map();
+      
+      allQuestions.forEach(q => {
+        if (q.tableId && !q.columnId) {
+          // Table-level question
+          if (!questionsByTable.has(q.tableId)) {
+            questionsByTable.set(q.tableId, []);
+          }
+          questionsByTable.get(q.tableId).push(q);
+        } else if (q.columnId) {
+          // Column-level question
+          if (!questionsByColumn.has(q.columnId)) {
+            questionsByColumn.set(q.columnId, []);
+          }
+          questionsByColumn.get(q.columnId).push(q);
+        }
+      });
+      
+      // Build CSV content
+      let csvOutput = '';
+      
+      // SECTION 1: TABLE CONTEXT
+      csvOutput += 'Section,Table,Schema,RowCount,ColumnCount,LastUpdated,AI_Table_Description,SME_Table_Questions_Count,SME_Table_Answered_Count,Related_Tables,Notes\n';
+      
+      for (const table of tables) {
+        const context = contextByTableId.get(table.id);
+        const tableQuestions = questionsByTable.get(table.id) || [];
+        const answeredCount = tableQuestions.filter(q => q.isAnswered).length;
+        
+        const aiTableDesc = context?.tableDesc ? 
+          (typeof context.tableDesc === 'string' ? context.tableDesc : 
+           (context.tableDesc as any)?.description || JSON.stringify(context.tableDesc)) : '';
+        
+        // Get foreign key relationships for this table
+        const foreignKeys = await storage.getForeignKeysByTableId(table.id);
+        const relatedTables = foreignKeys.map(fk => {
+          return fk.fromTableId === table.id ? `→${fk.toTableId}` : `←${fk.fromTableId}`;
+        }).join('; ');
+        
+        csvOutput += `${safeCSV('TABLE_CONTEXT')},${safeCSV(table.name)},${safeCSV(table.schema)},${safeCSV(table.rowCount)},${safeCSV(table.columnCount)},${safeCSV(table.lastUpdated?.toISOString())},${safeCSV(aiTableDesc)},${safeCSV(tableQuestions.length)},${safeCSV(answeredCount)},${safeCSV(relatedTables)},${safeCSV('')}\n`;
+      }
+      
+      // Add blank line between sections
+      csvOutput += '\n';
+      
+      // SECTION 2: COLUMN DETAILS
+      csvOutput += 'Section,Table,Column,DataType,Nullable,Unique,Cardinality,NullPercent,Min,Max,DistinctSample,AI_Hypothesis,QuestionText,QuestionType,Options,Response,IsAnswered,Priority,FK_Role,FK_Target,Notes\n';
+      
+      for (const table of tables) {
+        const columns = await storage.getColumnsByTableId(table.id);
+        const context = contextByTableId.get(table.id);
+        
+        for (const column of columns) {
+          const columnQuestions = questionsByColumn.get(column.id) || [];
+          
+          // Get AI hypothesis from context or column
+          let aiHypothesis = column.aiDescription || '';
+          if (context?.columnDescs) {
+            const columnDesc = Array.isArray(context.columnDescs) ? 
+              context.columnDescs.find((desc: any) => desc.column_name === column.name) : 
+              null;
+            if (columnDesc && columnDesc.description) {
+              aiHypothesis = columnDesc.description;
+            }
+          }
+          
+          // Get sample values (first few distinct values)
+          let sampleValues = '';
+          if (column.distinctValues && Array.isArray(column.distinctValues)) {
+            sampleValues = column.distinctValues.slice(0, 5).join('; ');
+          }
+          
+          // Find foreign key relationship for this column
+          const allForeignKeys = await storage.getForeignKeysByTableId(table.id);
+          const columnFK = allForeignKeys.find(fk => 
+            fk.fromColumnId === column.id || fk.toColumnId === column.id
+          );
+          
+          let fkRole = '';
+          let fkTarget = '';
+          if (columnFK) {
+            if (columnFK.fromColumnId === column.id) {
+              fkRole = 'FROM';
+              fkTarget = `${columnFK.toTableId}.${columnFK.toColumnId}`;
+            } else {
+              fkRole = 'TO';  
+              fkTarget = `${columnFK.fromTableId}.${columnFK.fromColumnId}`;
+            }
+          }
+          
+          // If there are questions for this column, create one row per question
+          if (columnQuestions.length > 0) {
+            for (const question of columnQuestions) {
+              csvOutput += `${safeCSV('COLUMN_DETAILS')},${safeCSV(table.name)},${safeCSV(column.name)},${safeCSV(column.dataType)},${safeCSV(column.isNullable)},${safeCSV(column.isUnique)},${safeCSV(column.cardinality)},${safeCSV(column.nullPercentage)},${safeCSV(column.minValue)},${safeCSV(column.maxValue)},${safeCSV(sampleValues)},${safeCSV(aiHypothesis)},${safeCSV(question.questionText)},${safeCSV(question.questionType)},${safeCSV(question.options)},${safeCSV(question.response)},${safeCSV(question.isAnswered ? 'Yes' : 'No')},${safeCSV(question.priority)},${safeCSV(fkRole)},${safeCSV(fkTarget)},${safeCSV('')}\n`;
+            }
+          } else {
+            // If no questions, create one row with empty question fields
+            csvOutput += `${safeCSV('COLUMN_DETAILS')},${safeCSV(table.name)},${safeCSV(column.name)},${safeCSV(column.dataType)},${safeCSV(column.isNullable)},${safeCSV(column.isUnique)},${safeCSV(column.cardinality)},${safeCSV(column.nullPercentage)},${safeCSV(column.minValue)},${safeCSV(column.maxValue)},${safeCSV(sampleValues)},${safeCSV(aiHypothesis)},${safeCSV('')},${safeCSV('')},${safeCSV('')},${safeCSV('')},${safeCSV('No')},${safeCSV('')},${safeCSV(fkRole)},${safeCSV(fkTarget)},${safeCSV('')}\n`;
+          }
+        }
+      }
+      
+      // Set response headers
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${database.name}-sme-comprehensive-${new Date().toISOString().split('T')[0]}.csv"`);
+      
       res.send(csvOutput);
+      
     } catch (error) {
+      console.error('Comprehensive CSV export error:', error);
       res.status(500).json({ error: error instanceof Error ? error.message : "CSV export failed" });
     }
   });
