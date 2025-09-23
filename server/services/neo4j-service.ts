@@ -344,9 +344,16 @@ export class Neo4jService {
   async clearNamespace(namespace: string): Promise<void> {
     const session = this.getSession();
     try {
+      // Delete all nodes with the namespace property
       await session.run(`
         MATCH (n {namespace: $namespace})
         DETACH DELETE n
+      `, { namespace });
+      
+      // Also delete the Namespace node itself
+      await session.run(`
+        MATCH (n:Namespace {name: $namespace})
+        DELETE n
       `, { namespace });
     } finally {
       await session.close();

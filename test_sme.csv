@@ -1,0 +1,3 @@
+Context Type,Table,Column,Value,AI Context,AI Hypothesis,Question Text,Question Type,Question Options,SME Response,Question Answered,Priority,Notes
+TABLE_CONTEXT,studies,,,"This is the main table","Contains study data","How important is this table?",table,,"Very important",Yes,high,
+ENUM_CONTEXT,studies,status,RECRUITING,"Study is currently recruiting participants","This indicates an active recruitment phase","Is this recruiting status accurate?",enum_value,,"Yes, this is correct",Yes,medium,
