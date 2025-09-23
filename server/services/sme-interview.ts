@@ -238,7 +238,7 @@ export class SMEInterviewService {
       // Use only existing distinct values from storage (faster)
       for (const column of columns) {
         let sampleValuesStr = 'No sample values available';
-        if (column.distinctValues) {
+        if (column.distinctValues && typeof column.distinctValues === 'string') {
           try {
             const existingValues = JSON.parse(column.distinctValues);
             if (Array.isArray(existingValues) && existingValues.length > 0) {
@@ -345,35 +345,87 @@ export class SMEInterviewService {
 
   async processCSVResponse(csvData: string, databaseId: string): Promise<void> {
     // Parse CSV and update SME responses
-    const lines = csvData.split('\n');
-    const headers = lines[0].split(',');
-    
-    const questionIndex = headers.findIndex(h => h.toLowerCase().includes('question'));
-    const responseIndex = headers.findIndex(h => h.toLowerCase().includes('response'));
-    
-    if (questionIndex === -1 || responseIndex === -1) {
-      throw new Error('Invalid CSV format: missing question or response columns');
+    const lines = csvData.trim().split('\n').filter(line => line.trim());
+    if (lines.length < 2) {
+      throw new Error('Invalid CSV format: CSV must have at least a header row and one data row');
     }
 
-    for (let i = 1; i < lines.length; i++) {
-      const row = lines[i].split(',');
-      if (row.length < Math.max(questionIndex, responseIndex) + 1) continue;
+    // Simple CSV parsing that handles quoted values
+    const parseCSVLine = (line: string): string[] => {
+      const result = [];
+      let current = '';
+      let inQuotes = false;
+      
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+          result.push(current.trim());
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      result.push(current.trim());
+      return result;
+    };
 
-      const questionText = row[questionIndex]?.trim();
-      const response = row[responseIndex]?.trim();
+    const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().replace(/['"]/g, ''));
+    
+    // Look for question and response columns with more flexible matching
+    const possibleQuestionHeaders = ['question', 'question_text', 'questiontext', 'prompt', 'query'];
+    const possibleResponseHeaders = ['response', 'answer', 'reply', 'sme_response', 'smeresponse'];
+    
+    let questionIndex = -1;
+    let responseIndex = -1;
+    
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i];
+      if (questionIndex === -1 && possibleQuestionHeaders.some(ph => header.includes(ph))) {
+        questionIndex = i;
+      }
+      if (responseIndex === -1 && possibleResponseHeaders.some(rh => header.includes(rh))) {
+        responseIndex = i;
+      }
+    }
+    
+    if (questionIndex === -1 || responseIndex === -1) {
+      throw new Error(`Invalid CSV format: Could not find question and response columns. Found headers: ${headers.join(', ')}`);
+    }
+
+    // Get all questions once for efficiency
+    const questions = await storage.getQuestionsByDatabaseId(databaseId);
+    let processed = 0;
+    let updated = 0;
+
+    for (let i = 1; i < lines.length; i++) {
+      const row = parseCSVLine(lines[i]);
+      if (row.length <= Math.max(questionIndex, responseIndex)) continue;
+
+      const questionText = row[questionIndex]?.replace(/['"]/g, '').trim();
+      const response = row[responseIndex]?.replace(/['"]/g, '').trim();
 
       if (!questionText || !response) continue;
 
-      // Find matching question in database
-      const questions = await storage.getQuestionsByDatabaseId(databaseId);
-      const matchingQuestion = questions.find(q => 
-        q.questionText.includes(questionText) || questionText.includes(q.questionText)
-      );
+      processed++;
+
+      // Find matching question in database with improved matching
+      const matchingQuestion = questions.find(q => {
+        const qText = q.questionText.toLowerCase();
+        const csvText = questionText.toLowerCase();
+        return qText.includes(csvText) || csvText.includes(qText) || 
+               qText.replace(/[^\w\s]/g, '') === csvText.replace(/[^\w\s]/g, '');
+      });
 
       if (matchingQuestion) {
         await storage.answerSmeQuestion(matchingQuestion.id, response);
+        updated++;
       }
     }
+
+    console.log(`CSV processing complete: ${processed} rows processed, ${updated} questions updated`);
   }
 }
 
