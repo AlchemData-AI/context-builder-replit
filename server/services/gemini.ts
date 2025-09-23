@@ -456,7 +456,7 @@ ${tablesPromptData}
 Generate complete analysis for ALL ${tables.length} tables provided.`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await ai.models.generateContent({
         model: "gemini-2.5-pro",
         config: {
           systemInstruction: systemPrompt
