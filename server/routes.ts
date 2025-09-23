@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import multer from 'multer';
 import { storage } from "./storage";
 import { postgresAnalyzer } from "./services/postgres-analyzer";
 import { neo4jService } from "./services/neo4j-service";
@@ -12,6 +13,21 @@ import { insertConnectionSchema, insertDatabaseSchema, insertTableSchema, insert
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Configure multer for CSV file uploads
+  const csvUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB limit
+    },
+    fileFilter: (req, file, cb) => {
+      if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only CSV files are allowed'));
+      }
+    }
+  });
+
   // Connection management routes
   app.post("/api/connections", async (req, res) => {
     try {
@@ -1107,6 +1123,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "CSV export failed" });
     }
+  });
+
+  // CSV upload endpoint for SME responses
+  app.post("/api/databases/:id/upload-csv", (req, res) => {
+    csvUpload.single('csvFile')(req, res, async (err) => {
+      try {
+        // Handle multer-specific errors first
+        if (err) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ error: "File too large. Maximum size is 10MB." });
+          }
+          if (err.message === 'Only CSV files are allowed') {
+            return res.status(400).json({ error: "Only CSV files are allowed. Please upload a .csv file." });
+          }
+          return res.status(400).json({ error: err.message });
+        }
+
+        const { id } = req.params;
+        
+        // Verify database exists
+        const database = await storage.getDatabase(id);
+        if (!database) {
+          return res.status(404).json({ error: "Database not found" });
+        }
+        
+        if (!req.file) {
+          return res.status(400).json({ error: "No CSV file uploaded" });
+        }
+
+        // Convert buffer to string
+        const csvData = req.file.buffer.toString('utf-8');
+        
+        // Process the CSV responses using existing service
+        await smeInterviewService.processCSVResponse(csvData, id);
+        
+        // Get updated progress after processing
+        const progress = await smeInterviewService.getInterviewProgress(id);
+        
+        res.json({ 
+          success: true, 
+          message: "CSV responses processed successfully",
+          progress: progress
+        });
+      } catch (error) {
+        console.error('CSV upload error:', error);
+        res.status(500).json({ error: error instanceof Error ? error.message : "CSV upload failed" });
+      }
+    });
   });
 
   // Database cleanup routes
