@@ -96,20 +96,6 @@ export default function SMEInterview() {
     enabled: !!database
   });
 
-  // Generate questions mutation
-  const generateQuestions = useMutation({
-    mutationFn: async (tableId: string) => {
-      const response = await apiRequest('POST', `/api/tables/${tableId}/generate-questions`);
-      return response.json();
-    },
-    onSuccess: () => {
-      toast({ title: "Questions generated", description: "SME interview questions have been created" });
-      queryClient.invalidateQueries({ queryKey: ['/api/databases', database?.id, 'sme-questions'] });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Question generation failed", description: error.message, variant: "destructive" });
-    }
-  });
 
   // Answer question mutation
   const answerQuestion = useMutation({
@@ -141,15 +127,6 @@ export default function SMEInterview() {
     answerQuestion.mutate({ questionId, response });
   };
 
-  const generateAllQuestions = async () => {
-    for (const table of selectedTables) {
-      try {
-        await generateQuestions.mutateAsync(table.id);
-      } catch (error) {
-        console.error(`Failed to generate questions for table ${table.name}:`, error);
-      }
-    }
-  };
 
   const exportCSV = async () => {
     if (!database) return;
@@ -219,14 +196,6 @@ export default function SMEInterview() {
           >
             <i className="fas fa-download mr-2"></i>
             Export Q&A CSV
-          </Button>
-          <Button 
-            onClick={generateAllQuestions}
-            disabled={generateQuestions.isPending}
-            data-testid="button-generate-questions"
-          >
-            <i className="fas fa-question-circle mr-2"></i>
-            {generateQuestions.isPending ? "Generating..." : "Generate Questions"}
           </Button>
         </div>
       </div>
