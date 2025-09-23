@@ -9,6 +9,7 @@ import { schemaAnalyzer } from "./services/schema-analyzer";
 import { statisticalAnalyzer } from "./services/statistical-analyzer";
 import { semanticAnalyzer } from "./services/semantic-analyzer";
 import { smeInterviewService } from "./services/sme-interview";
+import { EnvironmentService } from "./services/environment-service";
 import { insertConnectionSchema, insertDatabaseSchema, insertTableSchema, insertAgentPersonaSchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -103,6 +104,9 @@ function groupTablesByDomain(tables: any[]) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Initialize environment service for automatic Neo4j connection selection
+  const environmentService = EnvironmentService.getInstance();
+  
   // Configure multer for CSV file uploads
   const csvUpload = multer({
     storage: multer.memoryStorage(),
@@ -1928,9 +1932,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // Parse form data fields (multer populates req.body for text fields)
         const buildKnowledgeGraph = req.body?.buildKnowledgeGraph === 'true';
-        const neo4jConnectionId = req.body?.neo4jConnectionId;
+        // Automatically select Neo4j connection based on environment
+        const neo4jConnectionId = environmentService.getNeo4jConnectionId();
         
-        if (buildKnowledgeGraph && neo4jConnectionId) {
+        if (buildKnowledgeGraph) {
           try {
             console.log('Building knowledge graph with connection:', neo4jConnectionId);
             const neo4jConnection = await storage.getConnection(neo4jConnectionId);
@@ -2082,12 +2087,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         body: req.body,
         headers: req.headers['content-type']
       });
-      const { neo4jConnectionId } = req.body;
-      
-      if (!neo4jConnectionId) {
-        console.log('Missing neo4jConnectionId in request body:', JSON.stringify(req.body));
-        return res.status(400).json({ error: "Neo4j connection ID is required" });
-      }
+      // Automatically select Neo4j connection based on environment
+      const neo4jConnectionId = environmentService.getNeo4jConnectionId();
+      console.log('Auto-selected Neo4j connection for build-graph:', neo4jConnectionId);
       
       const neo4jConnection = await storage.getConnection(neo4jConnectionId);
       if (!neo4jConnection) {
@@ -2290,11 +2292,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/databases/:id/clear-graph", async (req, res) => {
     try {
       const { id } = req.params;
-      const { neo4jConnectionId } = req.body;
-      
-      if (!neo4jConnectionId) {
-        return res.status(400).json({ error: "Neo4j connection ID is required" });
-      }
+      // Automatically select Neo4j connection based on environment
+      const neo4jConnectionId = environmentService.getNeo4jConnectionId();
+      console.log('Auto-selected Neo4j connection for clear-graph:', neo4jConnectionId);
       
       const neo4jConnection = await storage.getConnection(neo4jConnectionId);
       if (!neo4jConnection) {
@@ -2322,11 +2322,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/databases/:id/graph-stats", async (req, res) => {
     try {
       const { id } = req.params;
-      const { neo4jConnectionId } = req.query;
-      
-      if (!neo4jConnectionId) {
-        return res.status(400).json({ error: "Neo4j connection ID is required" });
-      }
+      // Automatically select Neo4j connection based on environment
+      const neo4jConnectionId = environmentService.getNeo4jConnectionId();
       
       const neo4jConnection = await storage.getConnection(neo4jConnectionId as string);
       if (!neo4jConnection) {
@@ -2350,57 +2347,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Debug endpoint to see all personas in Neo4j (temporary)
-  app.get('/api/debug/neo4j-personas', async (req, res) => {
-    try {
-      const { neo4jConnectionId } = req.query;
-      
-      if (!neo4jConnectionId) {
-        return res.status(400).json({ error: 'neo4jConnectionId is required' });
-      }
-
-      const neo4jConnection = await storage.getConnection(neo4jConnectionId as string);
-      if (!neo4jConnection || neo4jConnection.type !== 'neo4j') {
-        return res.status(404).json({ error: 'Neo4j connection not found' });
-      }
-
-      const connected = await neo4jService.connect(neo4jConnection.config as any);
-      if (!connected) {
-        return res.status(500).json({ error: "Failed to connect to Neo4j" });
-      }
-      
-      try {
-        // Query all personas regardless of namespace
-        const session = (neo4jService as any).getSession();
-        try {
-          const result = await session.run(`
-            MATCH (p:AgentPersona) 
-            RETURN p.name, p.namespace, p.id, p.description
-            ORDER BY p.namespace, p.name
-          `);
-          
-          const personas = result.records.map(record => ({
-            name: record.get('p.name'),
-            namespace: record.get('p.namespace'),
-            id: record.get('p.id'),
-            description: record.get('p.description')
-          }));
-          
-          res.json(personas);
-        } finally {
-          await session.close();
-        }
-      } finally {
-        await neo4jService.disconnect();
-      }
-    } catch (error) {
-      console.error('Debug query failed:', error);
-      res.status(500).json({ 
-        error: 'Failed to query Neo4j', 
-        details: error instanceof Error ? error.message : String(error) 
-      });
-    }
-  });
 
   // Add API 404 handler to prevent HTML confusion for API misses
   app.use('/api', (req, res) => {
