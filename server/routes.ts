@@ -1339,7 +1339,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const table of tables) {
         const context = contextByTableId.get(table.id);
         const tableQuestions = questionsByTable.get(table.id) || [];
-        const answeredCount = tableQuestions.filter(q => q.isAnswered).length;
+        const answeredCount = tableQuestions.filter((q: any) => q.isAnswered).length;
         
         const aiTableDesc = context?.tableDesc ? 
           (typeof context.tableDesc === 'string' ? context.tableDesc : 
@@ -1425,7 +1425,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Group enum questions by enum value ID
       const enumQuestionsByValueId = new Map();
-      allQuestions.filter((q: any) => q.questionType === 'enum_value' && q.enumValueId).forEach((q: any) => {
+      allQuestions.filter((q) => q.questionType === 'enum_value' && q.enumValueId).forEach((q) => {
         if (!enumQuestionsByValueId.has(q.enumValueId)) {
           enumQuestionsByValueId.set(q.enumValueId, []);
         }
@@ -1481,6 +1481,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
+  // Helper function to safely resolve table/column names to Neo4j node IDs
+  async function resolveTableColumnToNodeIds(tableName: string, columnName: string, databaseId: string): Promise<{ tableId: string; columnId: string } | null> {
+    try {
+      const tables = await storage.getTablesByDatabaseId(databaseId);
+      const table = tables.find(t => t.name.toLowerCase() === tableName.toLowerCase());
+      if (!table) return null;
+      
+      const columns = await storage.getColumnsByTableId(table.id);
+      const column = columns.find(c => c.name.toLowerCase() === columnName.toLowerCase());
+      if (!column) return null;
+      
+      return { tableId: table.id, columnId: column.id };
+    } catch (error) {
+      console.error(`Failed to resolve ${tableName}.${columnName}:`, error);
+      return null;
+    }
+  }
+
+  // Helper function to extract and validate join information from SME responses
+  async function extractJoinInfoFromSMEResponse(questionText: string, response: string, databaseId: string): Promise<{ fromId: string; toId: string; type: string } | null> {
+    // Only process confirmed joins (yes responses)
+    if (!response || !['yes', 'y', 'true', 'confirmed'].includes(response.toLowerCase().trim())) {
+      return null;
+    }
+    
+    // Look for table.column patterns in question text
+    const tablePattern = /(\w+)\.(\w+).*?(?:relates?|joins?|connects?).*?(\w+)\.(\w+)/i;
+    const match = questionText.match(tablePattern);
+    
+    if (!match) return null;
+    
+    const [, fromTable, fromColumn, toTable, toColumn] = match;
+    
+    // Resolve names to actual node IDs
+    const fromNodeIds = await resolveTableColumnToNodeIds(fromTable, fromColumn, databaseId);
+    const toNodeIds = await resolveTableColumnToNodeIds(toTable, toColumn, databaseId);
+    
+    if (!fromNodeIds || !toNodeIds) return null;
+    
+    return {
+      fromId: fromNodeIds.columnId,
+      toId: toNodeIds.columnId,
+      type: 'SME_VALIDATED_JOIN' // Constrained to safe type
+    };
+  }
+
   // Incremental update function for existing knowledge graphs
   async function performIncrementalUpdate(databaseId: string, namespace: string) {
     console.log('Performing incremental knowledge graph update for database:', databaseId);
@@ -1514,8 +1560,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     
     // Process each column with SME feedback
-    for (const columnId of questionsByColumn.keys()) {
-      const columnQuestions = questionsByColumn.get(columnId);
+    for (const [columnId, columnQuestions] of Array.from(questionsByColumn.entries())) {
       try {
         const column = await storage.getColumnById(columnId);
         if (!column || !column.aiDescription) continue;
@@ -1550,51 +1595,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let relationshipsProcessed = 0;
     for (const question of newlyAnsweredQuestions) {
       try {
-        // Process join suggestions from SME responses
-        if (question.response && question.response.toLowerCase().includes('yes')) {
-          // Extract table and column information from the question text
-          const joinInfo = extractJoinInfoFromQuestion(question.questionText, question.response);
-          if (joinInfo && joinInfo.fromTableId && joinInfo.toTableId) {
-            
-            // Create SME-validated relationship in Neo4j
-            await neo4jService.createRelationship({
-              fromId: joinInfo.fromColumnId || joinInfo.fromTableId,
-              toId: joinInfo.toColumnId || joinInfo.toTableId,
-              type: 'SME_VALIDATED_JOIN',
-              properties: {
-                smeResponse: question.response,
-                confidence: 0.9, // High confidence since SME validated
-                validatedAt: new Date().toISOString(),
-                questionId: question.id
-              }
-            });
-            
-            relationshipsProcessed++;
-            console.log(`Created SME-validated relationship: ${joinInfo.fromTableId} -> ${joinInfo.toTableId}`);
-          }
+        // Process validated join suggestions from SME responses
+        const joinInfo = await extractJoinInfoFromSMEResponse(question.questionText, question.response || '', databaseId);
+        if (joinInfo) {
+          // Create SME-validated relationship in Neo4j
+          await neo4jService.createRelationship({
+            fromId: joinInfo.fromId,
+            toId: joinInfo.toId,
+            type: joinInfo.type,
+            properties: {
+              smeResponse: question.response,
+              confidence: 0.9, // High confidence since SME validated
+              validatedAt: new Date().toISOString(),
+              questionId: question.id
+            }
+          });
+          
+          relationshipsProcessed++;
+          console.log(`Created SME-validated relationship: ${joinInfo.fromId} -> ${joinInfo.toId} (question ${question.id})`);
         }
       } catch (error) {
         console.error(`Failed to process relationship question ${question.id}:`, error);
       }
     }
     
-    // Helper function to extract join information from question text and response
-    function extractJoinInfoFromQuestion(questionText: string, response: string): any {
-      // Look for table/column patterns in question text like "table1.column1 relates to table2.column2"
-      const tablePattern = /(\w+)\.(\w+).*?(?:relates?|joins?|connects?).*?(\w+)\.(\w+)/i;
-      const match = questionText.match(tablePattern);
-      
-      if (match) {
-        return {
-          fromTableId: match[1], // This would need to be resolved to actual table IDs
-          fromColumnId: match[2],
-          toTableId: match[3], 
-          toColumnId: match[4],
-          type: 'JOIN'
-        };
-      }
-      return null;
-    }
     
     // Get fresh statistics after updates (don't manually modify counts)
     const updatedStats = await neo4jService.getNamespaceStatistics(namespace);
@@ -1703,28 +1727,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     for (const question of answeredRelationshipQuestions) {
       try {
-        // Process join suggestions from SME responses
-        if (question.response && question.response.toLowerCase().includes('yes')) {
-          // Extract table and column information from the question text
-          const joinInfo = extractJoinInfoFromQuestion(question.questionText, question.response);
-          if (joinInfo && joinInfo.fromTableId && joinInfo.toTableId) {
-            
-            // Create SME-validated relationship in Neo4j
-            await neo4jService.createRelationship({
-              fromId: joinInfo.fromColumnId || joinInfo.fromTableId,
-              toId: joinInfo.toColumnId || joinInfo.toTableId,
-              type: 'SME_VALIDATED_JOIN',
-              properties: {
-                smeResponse: question.response,
-                confidence: 0.9, // High confidence since SME validated
-                validatedAt: new Date().toISOString(),
-                questionId: question.id
-              }
-            });
-            
-            stats.relationshipCount++;
-            console.log(`Created SME-validated relationship: ${joinInfo.fromTableId} -> ${joinInfo.toTableId}`);
-          }
+        // Process validated join suggestions from SME responses  
+        const joinInfo = await extractJoinInfoFromSMEResponse(question.questionText, question.response || '', databaseId);
+        if (joinInfo) {
+          // Create SME-validated relationship in Neo4j
+          await neo4jService.createRelationship({
+            fromId: joinInfo.fromId,
+            toId: joinInfo.toId,
+            type: joinInfo.type,
+            properties: {
+              smeResponse: question.response,
+              confidence: 0.9, // High confidence since SME validated
+              validatedAt: new Date().toISOString(),
+              questionId: question.id
+            }
+          });
+          
+          stats.relationshipCount++;
+          console.log(`Created SME-validated relationship: ${joinInfo.fromId} -> ${joinInfo.toId} (question ${question.id})`);
         }
       } catch (error) {
         console.error(`Failed to process relationship question ${question.id}:`, error);
@@ -1737,13 +1757,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const foreignKeys = await storage.getForeignKeysByTableId(table.id);
       for (const fk of foreignKeys) {
         await neo4jService.createRelationship({
-          fromTableId: fk.fromTableId || '',
-          fromColumnId: fk.fromColumnId || '',
-          toTableId: fk.toTableId || '',
-          toColumnId: fk.toColumnId || '',
-          relationshipType: 'FOREIGN_KEY',
-          confidence: fk.confidence || '0.5',
-          isValidated: fk.isValidated || false
+          fromId: fk.fromColumnId || '',
+          toId: fk.toColumnId || '',
+          type: 'FOREIGN_KEY',
+          properties: {
+            confidence: parseFloat(fk.confidence || '0.5'),
+            isValidated: fk.isValidated || false
+          }
         });
         stats.relationshipCount++;
       }
@@ -2095,15 +2115,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
               
               // Create Value nodes for low-cardinality columns with AI context from enum values
               if (column.cardinality && column.cardinality < 100 && column.distinctValues) {
+                // Get enum values with AI context if they exist
+                const enumValues = await storage.getEnumValuesByColumnId(column.id);
+                const enumValueMap = new Map();
+                enumValues.forEach((ev: any) => {
+                  enumValueMap.set(ev.value, { aiContext: ev.aiContext, aiHypothesis: ev.aiHypothesis });
+                });
+                
+                let values = [];
+                let valueNodesCreated = 0;
+                let valueNodesWithContext = 0;
+                
+                // Try multiple parsing strategies for distinctValues
                 try {
-                  // Get enum values with AI context if they exist
-                  const enumValues = await storage.getEnumValuesByColumnId(column.id);
-                  const enumValueMap = new Map();
-                  enumValues.forEach((ev: any) => {
-                    enumValueMap.set(ev.value, { aiContext: ev.aiContext, aiHypothesis: ev.aiHypothesis });
-                  });
-                  
-                  const values = JSON.parse(String(column.distinctValues));
+                  values = JSON.parse(String(column.distinctValues));
+                } catch (jsonError) {
+                  // Fallback: try CSV parsing for comma-separated values
+                  try {
+                    values = String(column.distinctValues).split(',').map(v => v.trim()).filter(v => v.length > 0);
+                    console.log(`Used CSV fallback for column ${column.name}: ${values.length} values`);
+                  } catch (csvError) {
+                    // Final fallback: semicolon or newline separated
+                    values = String(column.distinctValues).split(/[;\n]/).map(v => v.trim()).filter(v => v.length > 0);
+                    console.log(`Used delimiter fallback for column ${column.name}: ${values.length} values`);
+                  }
+                }
+                
+                if (values.length === 0) {
+                  console.warn(`No parseable values found for column ${column.name}, skipping value nodes`);
+                } else {
                   for (const value of values) {
                     const enumData = enumValueMap.get(String(value));
                     await neo4jService.createValueNode(column.id, {
@@ -2112,10 +2152,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
                       aiContext: enumData?.aiContext,
                       aiHypothesis: enumData?.aiHypothesis
                     });
+                    valueNodesCreated++;
+                    if (enumData?.aiContext || enumData?.aiHypothesis) {
+                      valueNodesWithContext++;
+                    }
                   }
-                } catch (e) {
-                  // Ignore JSON parse errors and fall back to basic value creation
-                  console.warn(`Failed to process enum values for column ${column.name}:`, e);
+                  
+                  console.log(`Created ${valueNodesCreated} value nodes for column ${column.name} (${valueNodesWithContext} with AI context)`);
                 }
               }
             }

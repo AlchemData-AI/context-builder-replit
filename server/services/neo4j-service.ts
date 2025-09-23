@@ -237,6 +237,12 @@ export class Neo4jService {
     try {
       const { fromId, toId, type, properties = {} } = relationship;
       
+      // Security: Allowlist for relationship types to prevent Cypher injection
+      const allowedTypes = ['HAS_COLUMN', 'HAS_VALUE', 'CONTAINS', 'REFERENCES', 'FOREIGN_KEY', 'SME_VALIDATED_JOIN', 'SME_VALIDATED_FK'];
+      if (!allowedTypes.includes(type)) {
+        throw new Error(`Invalid relationship type: ${type}. Allowed types: ${allowedTypes.join(', ')}`);
+      }
+      
       await session.run(`
         MATCH (from {id: $fromId})
         MATCH (to {id: $toId})
