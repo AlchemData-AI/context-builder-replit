@@ -244,6 +244,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Database-level statistical analysis route - analyze all selected tables
+  app.post("/api/databases/:id/analyze-statistics", async (req, res) => {
+    console.log(`[DEBUG] Hit database-level statistical analysis route for database: ${req.params.id}, method: ${req.method}`);
+    try {
+      const { id } = req.params;
+      
+      // Get all selected tables for this database
+      const tables = await storage.getSelectedTables(id);
+      if (tables.length === 0) {
+        return res.status(400).json({ error: "No tables selected for analysis. Please select tables first." });
+      }
+
+      console.log(`Starting statistical analysis for database ${id} with ${tables.length} selected tables`);
+
+      // Create a database-level analysis job
+      const job = await storage.createAnalysisJob({
+        databaseId: id,
+        type: "statistical",
+        status: "running",
+        progress: 0,
+        result: null,
+        error: null,
+        startedAt: new Date(),
+        completedAt: null
+      });
+
+      // Run analysis for all selected tables in background
+      const analyzeAllTables = async () => {
+        const results = [];
+        let totalProgress = 0;
+        
+        for (let i = 0; i < tables.length; i++) {
+          const table = tables[i];
+          
+          try {
+            console.log(`Analyzing table ${i + 1}/${tables.length}: ${table.name}`);
+            
+            const result = await statisticalAnalyzer.analyzeTable(table.id, (columnProgress) => {
+              // Update progress: (completed tables + current table progress) / total tables
+              const overallProgress = Math.round(((i + (columnProgress / 100)) / tables.length) * 100);
+              storage.updateAnalysisJob(job.id, { progress: overallProgress });
+            });
+            
+            results.push(result);
+            totalProgress = Math.round(((i + 1) / tables.length) * 100);
+            await storage.updateAnalysisJob(job.id, { progress: totalProgress });
+            
+          } catch (error) {
+            console.error(`Failed to analyze table ${table.name}:`, error);
+            results.push({ error: error instanceof Error ? error.message : "Unknown error", tableId: table.id, tableName: table.name });
+          }
+        }
+
+        return results;
+      };
+
+      // Start analysis in background
+      analyzeAllTables().then(results => {
+        storage.updateAnalysisJob(job.id, {
+          status: "completed",
+          progress: 100,
+          result: { tables: results },
+          completedAt: new Date()
+        });
+      }).catch(error => {
+        storage.updateAnalysisJob(job.id, {
+          status: "failed",
+          error: error.message,
+          completedAt: new Date()
+        });
+      });
+
+      res.json(job);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Database statistical analysis failed" });
+    }
+  });
+
   app.get("/api/databases/:id/statistical-summary", async (req, res) => {
     try {
       const { id } = req.params;
@@ -683,6 +761,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to get graph stats" });
     }
+  });
+
+  // Add API 404 handler to prevent HTML confusion for API misses
+  app.use('/api', (req, res) => {
+    res.status(404).json({ 
+      error: 'API endpoint not found', 
+      path: req.path, 
+      method: req.method 
+    });
   });
 
   const httpServer = createServer(app);
