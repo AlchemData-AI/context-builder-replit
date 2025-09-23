@@ -343,7 +343,7 @@ export class SMEInterviewService {
     return 'medium';
   }
 
-  async processCSVResponse(csvData: string, databaseId: string): Promise<void> {
+  async processCSVResponse(csvData: string, databaseId: string): Promise<{processed: number, updated: number}> {
     // Parse CSV and update SME responses
     const lines = csvData.trim().split('\n').filter(line => line.trim());
     if (lines.length < 2) {
@@ -426,6 +426,7 @@ export class SMEInterviewService {
     }
 
     console.log(`CSV processing complete: ${processed} rows processed, ${updated} questions updated`);
+    return { processed, updated };
   }
 }
 

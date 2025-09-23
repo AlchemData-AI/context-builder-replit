@@ -45,6 +45,10 @@ interface UploadResponse {
       reason: string;
     }>;
   };
+  csvProcessing?: {
+    processed: number;
+    updated: number;
+  };
 }
 
 interface PersonaDefinition {
@@ -105,7 +109,14 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
       return response.json();
     },
     onSuccess: (data) => {
+      console.log('Upload success response:', data);
       let description = data.message;
+      
+      // Add CSV processing results to the toast  
+      if (data.csvProcessing) {
+        description += ` Processed ${data.csvProcessing.processed} rows and updated ${data.csvProcessing.updated} questions.`;
+        console.log('CSV processing results:', data.csvProcessing);
+      }
       
       // Add knowledge graph build results to the toast
       if (data.knowledgeGraphBuilt && data.graphStats) {
@@ -133,6 +144,7 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
         }
       }
       
+      console.log('About to show toast with description:', description);
       toast({
         title: "Upload Successful",
         description,
@@ -157,6 +169,7 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
       }
     },
     onError: (error: Error) => {
+      console.error('Upload error:', error);
       toast({
         title: "Upload Failed",
         description: error.message,

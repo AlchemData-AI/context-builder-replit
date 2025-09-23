@@ -1805,7 +1805,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const csvData = req.file.buffer.toString('utf-8');
         
         // Process the CSV responses using existing service
-        await smeInterviewService.processCSVResponse(csvData, id);
+        const csvProcessingResult = await smeInterviewService.processCSVResponse(csvData, id);
         
         // Get updated progress after processing
         const progress = await smeInterviewService.getInterviewProgress(id);
@@ -1913,6 +1913,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           success: true, 
           message: "CSV responses processed successfully",
           progress: progress,
+          csvProcessing: csvProcessingResult,
           knowledgeGraphBuilt: !!graphBuildResult,
           graphStats: graphBuildResult || null,
           personasCreated: personasCreated
