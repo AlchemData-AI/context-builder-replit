@@ -10,7 +10,6 @@ import { statisticalAnalyzer } from "./services/statistical-analyzer";
 import { semanticAnalyzer } from "./services/semantic-analyzer";
 import { smeInterviewService } from "./services/sme-interview";
 import { insertConnectionSchema, insertDatabaseSchema, insertTableSchema, insertAgentPersonaSchema } from "@shared/schema";
-import { setupAuth, isAuthenticated } from "./replitAuth";
 import { z } from "zod";
 
 // Helper function to create default personas when none exist
@@ -104,80 +103,6 @@ function groupTablesByDomain(tables: any[]) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Auth middleware setup
-  await setupAuth(app);
-
-  // Auth routes
-  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      res.json(user);
-    } catch (error) {
-      console.error("Error fetching user:", error);
-      res.status(500).json({ message: "Failed to fetch user" });
-    }
-  });
-
-  // User secrets management routes
-  app.post('/api/auth/secrets', isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const { secretType, secretKey, config } = req.body;
-      
-      // Check if secret already exists and deactivate it
-      const existingSecret = await storage.getUserSecret(userId, secretType);
-      if (existingSecret) {
-        await storage.deleteUserSecret(existingSecret.id);
-      }
-      
-      const secret = await storage.createUserSecret({
-        userId,
-        secretType,
-        secretKey,
-        config,
-        isActive: true
-      });
-      
-      res.json({ id: secret.id, secretType: secret.secretType, isActive: secret.isActive });
-    } catch (error) {
-      console.error("Error creating user secret:", error);
-      res.status(500).json({ message: "Failed to create secret" });
-    }
-  });
-
-  app.get('/api/auth/secrets', isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const secretType = req.query.type as string;
-      const secrets = await storage.getUserSecrets(userId, secretType);
-      
-      // Don't expose the actual secret keys - only metadata
-      const sanitizedSecrets = secrets.map(secret => ({
-        id: secret.id,
-        secretType: secret.secretType,
-        isActive: secret.isActive,
-        createdAt: secret.createdAt,
-        hasConfig: !!secret.config
-      }));
-      
-      res.json(sanitizedSecrets);
-    } catch (error) {
-      console.error("Error fetching user secrets:", error);
-      res.status(500).json({ message: "Failed to fetch secrets" });
-    }
-  });
-
-  app.delete('/api/auth/secrets/:id', isAuthenticated, async (req: any, res) => {
-    try {
-      const { id } = req.params;
-      await storage.deleteUserSecret(id);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error deleting user secret:", error);
-      res.status(500).json({ message: "Failed to delete secret" });
-    }
-  });
   // Configure multer for CSV file uploads
   const csvUpload = multer({
     storage: multer.memoryStorage(),
@@ -194,10 +119,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Connection management routes
-  app.post("/api/connections", isAuthenticated, async (req: any, res) => {
+  app.post("/api/connections", async (req, res) => {
     try {
       const connectionData = insertConnectionSchema.parse(req.body);
-      const userId = req.user.claims.sub;
+      const userId = req.body.userId || "default-user"; // In real app, get from auth
       
       const connection = await storage.createConnection({
         ...connectionData,
@@ -210,9 +135,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/connections", isAuthenticated, async (req: any, res) => {
+  app.get("/api/connections", async (req, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.query.userId as string || "default-user";
       const connections = await storage.getConnectionsByUserId(userId);
       res.json(connections);
     } catch (error) {

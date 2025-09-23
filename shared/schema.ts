@@ -1,40 +1,12 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, boolean, decimal, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, boolean, decimal } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Session storage table for Replit Auth
-export const sessions = pgTable(
-  "sessions",
-  {
-    sid: varchar("sid").primaryKey(),
-    sess: jsonb("sess").notNull(),
-    expire: timestamp("expire").notNull(),
-  },
-  (table) => [index("IDX_session_expire").on(table.expire)],
-);
-
-// User storage table for Replit Auth
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email").unique(),
-  firstName: varchar("first_name"),
-  lastName: varchar("last_name"),
-  profileImageUrl: varchar("profile_image_url"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-// User secrets table for storing API keys and credentials per user
-export const userSecrets = pgTable("user_secrets", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull(),
-  secretType: text("secret_type").notNull(), // 'gemini_api_key', 'neo4j_connection', etc.
-  secretKey: text("secret_key").notNull(), // The actual API key or connection string
-  config: jsonb("config"), // Additional configuration (for Neo4j: uri, username, password)
-  isActive: boolean("is_active").default(true),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
 });
 
 export const connections = pgTable("connections", {
@@ -100,7 +72,6 @@ export const foreignKeys = pgTable("foreign_keys", {
 export const agentPersonas = pgTable("agent_personas", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   databaseId: varchar("database_id").notNull(),
-  userId: varchar("user_id").notNull(),
   name: text("name").notNull(),
   description: text("description").notNull(),
   keywords: jsonb("keywords"),
@@ -266,22 +237,9 @@ export type InsertContextItem = z.infer<typeof insertContextItemSchema>;
 export type EnumValue = typeof enumValues.$inferSelect;
 export type InsertEnumValue = z.infer<typeof insertEnumValueSchema>;
 export type User = typeof users.$inferSelect;
-export type UpsertUser = z.infer<typeof upsertUserSchema>;
-export type UserSecrets = typeof userSecrets.$inferSelect;
-export type InsertUserSecrets = z.infer<typeof insertUserSecretsSchema>;
+export type InsertUser = z.infer<typeof insertUserSchema>;
 
-export const insertUserSecretsSchema = createInsertSchema(userSecrets).pick({
-  userId: true,
-  secretType: true,
-  secretKey: true,
-  config: true,
-  isActive: true,
-});
-
-export const upsertUserSchema = createInsertSchema(users).pick({
-  id: true,
-  email: true,
-  firstName: true,
-  lastName: true,
-  profileImageUrl: true,
+export const insertUserSchema = createInsertSchema(users).pick({
+  username: true,
+  password: true,
 });
