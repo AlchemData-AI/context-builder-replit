@@ -38,9 +38,15 @@ export class SchemaAnalyzer {
     }
 
     try {
+      // First check what schemas are available
+      console.log(`🔍 Schema analysis: Checking available schemas in database`);
+      const availableSchemas = await postgresAnalyzer.getSchemas();
+      console.log(`🔍 Available schemas:`, availableSchemas);
+
       // Get all tables
-      console.log(`🔍 Schema analysis: Looking for tables in schema '${database.schema || 'public'}'`);
-      const tables = await postgresAnalyzer.getTables(database.schema || 'public');
+      const targetSchema = database.schema || 'public';
+      console.log(`🔍 Schema analysis: Looking for tables in schema '${targetSchema}'`);
+      const tables = await postgresAnalyzer.getTables(targetSchema);
       console.log(`🔍 Schema analysis: Found ${tables.length} tables:`, tables.map(t => `${t.schemaName}.${t.tableName}`));
       
       // Get existing tables to avoid duplicates
