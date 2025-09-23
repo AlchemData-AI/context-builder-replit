@@ -1475,6 +1475,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Get updated progress after processing
         const progress = await smeInterviewService.getInterviewProgress(id);
 
+        // Handle persona creation if requested
+        let personasCreated: any = null;
+        const definePersonas = req.body?.definePersonas === 'true';
+        const personasData = req.body?.personas;
+
+        if (definePersonas && personasData) {
+          try {
+            const personas = JSON.parse(personasData);
+            const createdPersonas = [];
+            
+            console.log('Creating personas:', personas);
+            
+            for (const personaData of personas) {
+              if (personaData.name && personaData.description) {
+                const persona = await storage.createAgentPersona({
+                  databaseId: id,
+                  name: personaData.name,
+                  description: personaData.description,
+                  keywords: personaData.keywords || []
+                });
+                createdPersonas.push({
+                  id: persona.id,
+                  name: persona.name,
+                  description: persona.description
+                });
+              }
+            }
+            
+            personasCreated = {
+              count: createdPersonas.length,
+              personas: createdPersonas
+            };
+            
+            console.log(`Created ${createdPersonas.length} personas for database ${id}`);
+          } catch (error) {
+            console.error('Error creating personas:', error);
+            // Don't fail the entire upload if persona creation fails
+          }
+        }
+
         // Optionally build knowledge graph if Neo4j connection is available
         let graphBuildResult: any = null;
         
@@ -1515,7 +1555,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message: "CSV responses processed successfully",
           progress: progress,
           knowledgeGraphBuilt: !!graphBuildResult,
-          graphStats: graphBuildResult || null
+          graphStats: graphBuildResult || null,
+          personasCreated: personasCreated
         });
       } catch (error) {
         console.error('CSV upload error:', error);

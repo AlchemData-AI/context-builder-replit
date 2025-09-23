@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Upload, FileText, CheckCircle, AlertCircle, Network } from "lucide-react";
+import { Upload, FileText, CheckCircle, AlertCircle, Network, Users, Plus, X } from "lucide-react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
@@ -33,6 +33,20 @@ interface UploadResponse {
     columnCount: number;
     relationshipCount: number;
   };
+  personasCreated?: {
+    count: number;
+    personas: Array<{
+      id: string;
+      name: string;
+      description: string;
+    }>;
+  };
+}
+
+interface PersonaDefinition {
+  name: string;
+  description: string;
+  keywords: string[];
 }
 
 export default function CSVUpload({ databaseId, onUploadComplete, className, 'data-testid': testId }: CSVUploadProps) {
@@ -43,6 +57,8 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
   const [dragActive, setDragActive] = useState(false);
   const [buildKnowledgeGraph, setBuildKnowledgeGraph] = useState(false);
   const [selectedNeo4jConnection, setSelectedNeo4jConnection] = useState<string>("");
+  const [definePersonas, setDefinePersonas] = useState(false);
+  const [personas, setPersonas] = useState<PersonaDefinition[]>([]);
 
   // Fetch Neo4j connections for knowledge graph building option
   const { data: connections = [] } = useQuery({
@@ -64,6 +80,12 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
       if (buildKnowledgeGraph && selectedNeo4jConnection) {
         formData.append('buildKnowledgeGraph', 'true');
         formData.append('neo4jConnectionId', selectedNeo4jConnection);
+      }
+      
+      // Add persona definitions
+      if (definePersonas && personas.length > 0) {
+        formData.append('definePersonas', 'true');
+        formData.append('personas', JSON.stringify(personas));
       }
 
       const response = await fetch(`/api/databases/${databaseId}/upload-csv`, {
@@ -88,6 +110,11 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
         description += " Note: Knowledge graph building was requested but may have failed - check server logs.";
       }
       
+      // Add persona creation results to the toast
+      if (data.personasCreated && data.personasCreated.count > 0) {
+        description += ` Created ${data.personasCreated.count} agent persona${data.personasCreated.count > 1 ? 's' : ''}: ${data.personasCreated.personas.map(p => p.name).join(', ')}.`;
+      }
+      
       toast({
         title: "Upload Successful",
         description,
@@ -96,6 +123,8 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
       setSelectedFile(null);
       setBuildKnowledgeGraph(false);
       setSelectedNeo4jConnection("");
+      setDefinePersonas(false);
+      setPersonas([]);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -169,6 +198,27 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
     if (file) {
       validateAndSetFile(file);
     }
+  };
+
+  // Persona management functions
+  const addNewPersona = () => {
+    setPersonas([...personas, { name: '', description: '', keywords: [] }]);
+  };
+
+  const removePersona = (index: number) => {
+    setPersonas(personas.filter((_, i) => i !== index));
+  };
+
+  const updatePersona = (index: number, field: keyof PersonaDefinition, value: string | string[]) => {
+    const updatedPersonas = personas.map((persona, i) => 
+      i === index ? { ...persona, [field]: value } : persona
+    );
+    setPersonas(updatedPersonas);
+  };
+
+  const updatePersonaKeywords = (index: number, keywords: string) => {
+    const keywordArray = keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    updatePersona(index, 'keywords', keywordArray);
   };
 
   const handleUpload = () => {
@@ -354,6 +404,107 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
             </p>
           </div>
         )}
+
+        {/* Persona Definition Options */}
+        <div className="space-y-4 p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="define-personas"
+              checked={definePersonas}
+              onCheckedChange={(checked) => setDefinePersonas(checked === true)}
+              data-testid="checkbox-define-personas"
+            />
+            <Label
+              htmlFor="define-personas"
+              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+            >
+              <Users className="inline-block w-4 h-4 mr-2" />
+              Define Agent Personas during upload
+            </Label>
+          </div>
+          
+          {definePersonas && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">Agent Personas</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addNewPersona}
+                  data-testid="button-add-persona"
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  Add Persona
+                </Button>
+              </div>
+              
+              {personas.map((persona, index) => (
+                <div key={index} className="space-y-2 p-3 bg-white dark:bg-gray-800 border rounded-md">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium text-muted-foreground">
+                      Persona {index + 1}
+                    </Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removePersona(index)}
+                      data-testid={`button-remove-persona-${index}`}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <div>
+                      <Label htmlFor={`persona-name-${index}`} className="text-xs">Name</Label>
+                      <Input
+                        id={`persona-name-${index}`}
+                        placeholder="e.g., Database Analyst"
+                        value={persona.name}
+                        onChange={(e) => updatePersona(index, 'name', e.target.value)}
+                        data-testid={`input-persona-name-${index}`}
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label htmlFor={`persona-description-${index}`} className="text-xs">Description</Label>
+                      <Input
+                        id={`persona-description-${index}`}
+                        placeholder="Brief description of this persona's role and expertise"
+                        value={persona.description}
+                        onChange={(e) => updatePersona(index, 'description', e.target.value)}
+                        data-testid={`input-persona-description-${index}`}
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label htmlFor={`persona-keywords-${index}`} className="text-xs">Keywords (comma-separated)</Label>
+                      <Input
+                        id={`persona-keywords-${index}`}
+                        placeholder="e.g., database, analysis, relationships"
+                        value={persona.keywords.join(', ')}
+                        onChange={(e) => updatePersonaKeywords(index, e.target.value)}
+                        data-testid={`input-persona-keywords-${index}`}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+              
+              {personas.length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No personas defined. Click "Add Persona" to create agent personas for your database.
+                </p>
+              )}
+            </div>
+          )}
+          
+          <p className="text-xs text-muted-foreground">
+            Define agent personas to represent different analytical roles and perspectives for your database.
+          </p>
+        </div>
 
         {/* Info Alert */}
         <Alert>
