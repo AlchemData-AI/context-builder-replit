@@ -41,7 +41,14 @@ interface JoinSuggestion {
   relationship_type: string;
 }
 
-interface JoinResult extends JoinSuggestion {
+interface JoinResult {
+  from_table?: string;
+  from_column?: string;
+  to_table?: string;
+  to_column?: string;
+  confidence?: number;
+  reasoning?: string;
+  relationship_type?: string;
   message?: string;
   error?: string;
 }
@@ -128,7 +135,20 @@ export default function AIContextGeneration() {
   // Parse results when jobs complete
   if (latestContextJob?.status === 'completed' && latestContextJob.result && !contextResults) {
     try {
-      const parsed = JSON.parse(latestContextJob.result);
+      // Check if result is already parsed object or needs parsing
+      let parsed;
+      if (typeof latestContextJob.result === 'string') {
+        // Validate JSON string before parsing
+        const trimmedResult = latestContextJob.result.trim();
+        if (!trimmedResult.startsWith('{') && !trimmedResult.startsWith('[')) {
+          throw new Error('Invalid JSON format: does not start with { or [');
+        }
+        parsed = JSON.parse(trimmedResult);
+      } else {
+        // Result is already an object
+        parsed = latestContextJob.result;
+      }
+      
       // Only set results if parsing succeeded and we got valid data
       if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
         setContextResults(parsed);
@@ -153,7 +173,20 @@ export default function AIContextGeneration() {
 
   if (latestJoinJob?.status === 'completed' && latestJoinJob.result && joinResults.length === 0) {
     try {
-      const parsed = JSON.parse(latestJoinJob.result);
+      // Check if result is already parsed object or needs parsing
+      let parsed;
+      if (typeof latestJoinJob.result === 'string') {
+        // Validate JSON string before parsing
+        const trimmedResult = latestJoinJob.result.trim();
+        if (!trimmedResult.startsWith('{') && !trimmedResult.startsWith('[')) {
+          throw new Error('Invalid JSON format: does not start with { or [');
+        }
+        parsed = JSON.parse(trimmedResult);
+      } else {
+        // Result is already an object
+        parsed = latestJoinJob.result;
+      }
+      
       if (parsed && Array.isArray(parsed) && parsed.length > 0) {
         setJoinResults(parsed);
       } else {
@@ -392,20 +425,20 @@ export default function AIContextGeneration() {
                   </div>
                 ) : (
                   <ScrollArea className="max-h-96">
-                    {joinResults.map((join: JoinSuggestion, index: number) => (
+                    {joinResults.filter(join => join.from_table).map((join, index: number) => (
                       <div key={index} className={`p-3 rounded-lg mb-3 ${
-                        join.confidence >= 0.9 ? 'bg-emerald-50 border border-emerald-200' :
-                        join.confidence >= 0.7 ? 'bg-blue-50 border border-blue-200' :
+                        (join.confidence ?? 0) >= 0.9 ? 'bg-emerald-50 border border-emerald-200' :
+                        (join.confidence ?? 0) >= 0.7 ? 'bg-blue-50 border border-blue-200' :
                         'bg-amber-50 border border-amber-200'
                       }`} data-testid={`join-suggestion-${index}`}>
                         <div className="flex items-center justify-between mb-2">
                           <span className="font-medium text-sm">{join.from_table} ↔ {join.to_table}</span>
                           <span className={`px-2 py-1 rounded text-xs ${
-                            join.confidence >= 0.9 ? 'bg-emerald-100 text-emerald-800' :
-                            join.confidence >= 0.7 ? 'bg-blue-100 text-blue-800' :
+                            (join.confidence ?? 0) >= 0.9 ? 'bg-emerald-100 text-emerald-800' :
+                            (join.confidence ?? 0) >= 0.7 ? 'bg-blue-100 text-blue-800' :
                             'bg-amber-100 text-amber-800'
                           }`}>
-                            {Math.round(join.confidence * 100)}%
+                            {Math.round((join.confidence ?? 0) * 100)}%
                           </span>
                         </div>
                         <p className="text-xs text-muted-foreground mb-1">
@@ -421,12 +454,12 @@ export default function AIContextGeneration() {
             {activeTab !== 'joins' && (
               <div className="space-y-4 max-h-80 overflow-y-auto">
                 {joinResults.length > 0 ? (
-                  joinResults.slice(0, 2).map((join: JoinSuggestion, index: number) => (
+                  joinResults.filter(join => join.from_table).slice(0, 2).map((join, index: number) => (
                     <div key={index} className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
                       <div className="flex items-center justify-between mb-2">
                         <span className="font-medium text-sm">{join.from_table} ↔ {join.to_table}</span>
                         <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded text-xs">
-                          {Math.round(join.confidence * 100)}%
+                          {Math.round((join.confidence ?? 0) * 100)}%
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground">{join.from_column} = {join.to_column}</p>

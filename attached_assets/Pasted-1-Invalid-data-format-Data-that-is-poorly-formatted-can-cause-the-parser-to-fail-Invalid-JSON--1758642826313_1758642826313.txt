@@ -1,0 +1,21 @@
+1. Invalid data format
+Data that is poorly formatted can cause the parser to fail. 
+Invalid JSON: A JSON object can be broken by a missing comma, unclosed bracket, or a stray character. Use an online JSON validator to ensure the data is perfectly structured before sending it.
+Malicious or corrupt characters: Badly encoded or hidden characters can corrupt the data. Standard character encoding, such as UTF-8, should be used.
+Incorrect data types: Ensure that the data types in your table are consistent. For example, a column for numbers should only contain numbers, not strings like "N/A" or "not applicable". 
+2. Inconsistent table structure
+The model can struggle if the table structure changes unexpectedly, even if the data is valid.
+Inconsistent markdown: Be meticulous with the formatting when submitting data as a markdown table.
+Use a single space on each side of the column header (e.g., | column name |, not | column name |).
+Use |---| consistently for the separator line. For a four-column table, always use |---|---|---|---|, not |--- | ---|---|--- |.
+Mixed formats: Sending a mix of markdown, CSV, or raw text without clear instructions can confuse the model. Stick to a single, clean format per request. 
+3. Excessive unstructured context
+Providing too much context can decrease accuracy and increase parsing errors. 
+Use the right tool for large datasets: Use a retrieval augmented generation (RAG) tool or a specific large file API instead of putting everything into the prompt directly when providing context from a very large table or many documents. The Gemini File API, for example, is designed for uploading larger documents like PDFs.
+Filter and summarize your data: Extract and send only the most relevant information needed to answer the query before sending tables to Gemini. This can be done with another model or a simpler script.
+Provide a manageable sample: If the goal is to have Gemini learn from the table, send a few example rows first, clearly explaining the schema and task. If you want it to operate on specific data, provide only the rows relevant to the user's query. 
+4. Logic errors and advanced issues
+If the basic formatting and size checks don't fix the problem, the issue may be more subtle.
+Unicode and escape sequences: The parser can break if the data contains special characters or un-escaped sequences (like \u or \t). Either replace them with their proper UTF-8 character or add a system instruction to Gemini telling it how to handle them.
+Intermediate "thoughts": The model can sometimes get stuck if you are using advanced tools that involve "thought" chains. In this case, you may need to adjust your system instructions to be more concise and less prescriptive about the internal thought process.
+Authentication and endpoint issues: An issue with your API key or the endpoint you are calling is a less common but possible cause. Double-check that your key is correct and that you're using a valid and available Gemini endpoint.
