@@ -501,9 +501,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         startedAt: new Date(),
         completedAt: null
       });
-      
-      const results = [];
 
+      // Send response immediately to avoid request timeout
+      res.json(job);
+
+      // Process tables asynchronously - use setImmediate to ensure it runs in next tick
+      console.log(`Starting async processing for job ${job.id} with ${tables.length} tables`);
+      setImmediate(() => {
+        processTablesAsync(job.id, tables, storage, schemaAnalyzer, statisticalAnalyzer, geminiService)
+          .catch(error => {
+            console.error(`Async processing failed for job ${job.id}:`, error);
+            // Update job status to failed
+            storage.updateAnalysisJob(job.id, {
+              status: "failed",
+              error: error instanceof Error ? error.message : "Async processing failed",
+              completedAt: new Date()
+            }).catch(dbError => {
+              console.error(`Failed to update job status after async error:`, dbError);
+            });
+          });
+      });
+      
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Context and question generation failed" });
+    }
+  });
+
+  // Async function to process tables in background
+  async function processTablesAsync(
+    jobId: string, 
+    tables: any[], 
+    storage: any, 
+    schemaAnalyzer: any, 
+    statisticalAnalyzer: any, 
+    geminiService: any
+  ) {
+    const results = [];
+
+    try {
       for (let i = 0; i < tables.length; i++) {
         const table = tables[i];
         
@@ -548,6 +583,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
           
           // Use combined Gemini service method
+          console.log(`Generating context and questions for table: ${table.name}`);
           const contextAndQuestions = await geminiService.generateContextAndQuestions(
             table.name,
             schema,
@@ -555,6 +591,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             columnData,
             statisticalResults
           );
+          console.log(`Successfully generated context for table: ${table.name}, columns: ${contextAndQuestions.columns.length}`);
           
           // Store AI descriptions for table and columns
           if (contextAndQuestions.table) {
@@ -603,25 +640,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
           
           const progress = Math.round(((i + 1) / tables.length) * 100);
-          await storage.updateAnalysisJob(job.id, { progress });
+          await storage.updateAnalysisJob(jobId, { progress });
           
         } catch (error) {
           console.error(`Failed to generate context and questions for table ${table.name}:`, error);
+          
+          // Add a failed result entry so the job can still complete
+          results.push({
+            table: table.name,
+            context: null,
+            columns: [],
+            questionsGenerated: 0,
+            error: error instanceof Error ? error.message : "Unknown error"
+          });
+          
+          // Update progress even on error so job doesn't get stuck
+          const progress = Math.round(((i + 1) / tables.length) * 100);
+          await storage.updateAnalysisJob(jobId, { progress });
         }
       }
 
-      await storage.updateAnalysisJob(job.id, {
+      // Mark job as completed
+      await storage.updateAnalysisJob(jobId, {
         status: "completed",
         progress: 100,
         result: JSON.stringify(results),
         completedAt: new Date()
       });
 
-      res.json(job);
+      console.log(`Job ${jobId} completed successfully with ${results.length} tables processed`);
+      
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Context and question generation failed" });
+      console.error(`Job ${jobId} failed with error:`, error);
+      await storage.updateAnalysisJob(jobId, {
+        status: "failed",
+        error: error instanceof Error ? error.message : "Unknown error occurred during processing",
+        completedAt: new Date()
+      });
     }
-  });
+  }
 
   // Comprehensive data export endpoint with multiple formats
   app.get("/api/databases/:id/export-data", async (req, res) => {
@@ -921,6 +978,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(jobs);
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch jobs" });
+    }
+  });
+
+  // Get individual job by database and job ID
+  app.get("/api/databases/:id/jobs/:jobId", async (req, res) => {
+    try {
+      const { id, jobId } = req.params;
+      const jobs = await storage.getAnalysisJobs(id);
+      const job = jobs.find(j => j.id === jobId);
+      
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+      
+      res.json(job);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch job" });
     }
   });
 
