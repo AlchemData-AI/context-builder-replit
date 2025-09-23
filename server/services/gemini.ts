@@ -1,8 +1,28 @@
 import { GoogleGenAI } from "@google/genai";
+import { storage } from "../storage";
 
-const ai = new GoogleGenAI({ 
+// Note: This service now requires user-specific API keys
+// Global fallback is only for backwards compatibility
+const globalAI = new GoogleGenAI({ 
   apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "" 
 });
+
+async function getAIForUser(userId: string): Promise<GoogleGenAI> {
+  try {
+    const userSecret = await storage.getUserSecret(userId, 'gemini_api_key');
+    if (userSecret && userSecret.secretKey) {
+      return new GoogleGenAI({
+        apiKey: userSecret.secretKey
+      });
+    }
+    
+    // Fallback to global API key if user hasn't configured their own
+    return globalAI;
+  } catch (error) {
+    console.warn(`Failed to get user-specific Gemini API key for user ${userId}:`, error);
+    return globalAI;
+  }
+}
 
 export interface TableDescription {
   table_name: string;
@@ -63,7 +83,8 @@ export class GeminiService {
   async generateTableDescription(
     tableName: string,
     schema: string,
-    sampleData: any[]
+    sampleData: any[],
+    userId: string
   ): Promise<TableDescription> {
     const truncatedSample = this.truncateText(JSON.stringify(sampleData, null, 2), 2000);
     
@@ -82,7 +103,8 @@ Generate a JSON response with the following structure:
 }`;
 
     try {
-      const response = await ai.models.generateContent({
+      const userAI = await getAIForUser(userId);
+      const response = await userAI.models.generateContent({
         model: "gemini-2.5-flash",
         config: {
           responseMimeType: "application/json",
@@ -125,7 +147,8 @@ Generate a JSON response with the following structure:
       sampleValues: any[];
       cardinality?: number;
       nullPercentage?: number;
-    }>
+    }>,
+    userId: string
   ): Promise<ColumnDescription[]> {
     const truncatedColumns = columns.map(col => ({
       ...col,
@@ -149,7 +172,8 @@ For each column, generate a JSON object with:
 Return an array of these objects.`;
 
     try {
-      const response = await ai.models.generateContent({
+      const userAI = await getAIForUser(userId);
+      const response = await userAI.models.generateContent({
         model: "gemini-2.5-flash",
         config: {
           responseMimeType: "application/json",
@@ -196,7 +220,8 @@ Return an array of these objects.`;
     tables: Array<{
       name: string;
       columns: Array<{ name: string; dataType: string }>;
-    }>
+    }>,
+    userId: string
   ): Promise<JoinSuggestion[]> {
     const prompt = `Analyze these database tables and suggest potential join relationships.
 
@@ -219,7 +244,8 @@ Return a JSON array of join suggestions with this structure:
 }`;
 
     try {
-      const response = await ai.models.generateContent({
+      const userAI = await getAIForUser(userId);
+      const response = await userAI.models.generateContent({
         model: "gemini-2.5-flash",
         config: {
           responseMimeType: "application/json",
@@ -254,7 +280,8 @@ Return a JSON array of join suggestions with this structure:
     tableName: string,
     schema: string,
     sampleData: any[],
-    statisticalAnalysis: any
+    statisticalAnalysis: any,
+    userId: string
   ): Promise<SMEQuestionSet> {
     const truncatedSample = this.truncateText(JSON.stringify(sampleData, null, 2), 2000);
     const truncatedStats = this.truncateText(JSON.stringify(statisticalAnalysis, null, 2), 1000);
@@ -283,7 +310,8 @@ ${truncatedSample}
 ${truncatedStats}`;
 
     try {
-      const response = await ai.models.generateContent({
+      const userAI = await getAIForUser(userId);
+      const response = await userAI.models.generateContent({
         model: "gemini-2.5-pro",
         config: {
           systemInstruction: systemPrompt,
@@ -355,7 +383,8 @@ ${truncatedStats}`;
       nullPercentage?: number;
       distinctValues?: any[];
     }>,
-    statisticalAnalysis: any
+    statisticalAnalysis: any,
+    userId: string
   ): Promise<{
     table: {
       table_name: string;
@@ -417,7 +446,8 @@ ${JSON.stringify(columnData.map(col => ({
 })), null, 2)}`;
 
     try {
-      const response = await ai.models.generateContent({
+      const userAI = await getAIForUser(userId);
+      const response = await userAI.models.generateContent({
         model: "gemini-2.5-pro",
         config: {
           systemInstruction: systemPrompt,
@@ -507,7 +537,8 @@ ${JSON.stringify(columnData.map(col => ({
     columnName: string,
     columnDataType: string,
     enumValues: string[],
-    columnDescription?: string
+    columnDescription: string | undefined,
+    userId: string
   ): Promise<Array<{value: string, context: string, hypothesis: string}>> {
     const prompt = `Analyze these enum values from a database column and provide business context and hypotheses for each value.
 
@@ -533,7 +564,8 @@ Generate a JSON response with this structure:
 }`;
 
     try {
-      const response = await ai.models.generateContent({
+      const userAI = await getAIForUser(userId);
+      const response = await userAI.models.generateContent({
         model: "gemini-2.5-flash",
         config: {
           responseMimeType: "application/json",
@@ -576,4 +608,5 @@ Generate a JSON response with this structure:
   }
 }
 
+// Backwards compatibility - deprecated, use with userId
 export const geminiService = new GeminiService();

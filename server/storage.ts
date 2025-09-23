@@ -1,20 +1,27 @@
 import { 
   connections, databases, tables, columns, foreignKeys, 
-  agentPersonas, personaTables, smeQuestions, analysisJobs, contextItems, enumValues, users,
+  agentPersonas, personaTables, smeQuestions, analysisJobs, contextItems, enumValues, users, userSecrets,
   type Connection, type InsertConnection, type Database, type InsertDatabase,
   type Table, type InsertTable, type Column, type ForeignKey,
   type AgentPersona, type InsertAgentPersona, type SmeQuestion, type InsertSmeQuestion,
   type AnalysisJob, type InsertAnalysisJob, type ContextItem, type InsertContextItem,
-  type EnumValue, type InsertEnumValue, type User, type InsertUser
+  type EnumValue, type InsertEnumValue, type User, type UpsertUser,
+  type UserSecrets, type InsertUserSecrets
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc } from "drizzle-orm";
 
 export interface IStorage {
-  // User methods
+  // User methods (Replit Auth)
   getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  upsertUser(user: UpsertUser): Promise<User>;
+  
+  // User secrets methods
+  createUserSecret(secret: InsertUserSecrets): Promise<UserSecrets>;
+  getUserSecrets(userId: string, secretType?: string): Promise<UserSecrets[]>;
+  getUserSecret(userId: string, secretType: string): Promise<UserSecrets | null>;
+  updateUserSecret(id: string, secretKey: string, config?: any): Promise<void>;
+  deleteUserSecret(id: string): Promise<void>;
 
   // Connection methods
   createConnection(connection: InsertConnection & { userId: string }): Promise<Connection>;
@@ -73,22 +80,76 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  // User operations (Replit Auth)
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user || undefined;
+    return user;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
-    return user || undefined;
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async upsertUser(userData: UpsertUser): Promise<User> {
     const [user] = await db
       .insert(users)
-      .values(insertUser)
+      .values(userData)
+      .onConflictDoUpdate({
+        target: users.id,
+        set: {
+          ...userData,
+          updatedAt: new Date(),
+        },
+      })
       .returning();
     return user;
+  }
+
+  // User secrets operations
+  async createUserSecret(secret: InsertUserSecrets): Promise<UserSecrets> {
+    const [userSecret] = await db
+      .insert(userSecrets)
+      .values(secret)
+      .returning();
+    return userSecret;
+  }
+
+  async getUserSecrets(userId: string, secretType?: string): Promise<UserSecrets[]> {
+    if (secretType) {
+      return await db
+        .select()
+        .from(userSecrets)
+        .where(and(eq(userSecrets.userId, userId), eq(userSecrets.secretType, secretType), eq(userSecrets.isActive, true)));
+    }
+    return await db
+      .select()
+      .from(userSecrets)
+      .where(and(eq(userSecrets.userId, userId), eq(userSecrets.isActive, true)));
+  }
+
+  async getUserSecret(userId: string, secretType: string): Promise<UserSecrets | null> {
+    const [secret] = await db
+      .select()
+      .from(userSecrets)
+      .where(and(eq(userSecrets.userId, userId), eq(userSecrets.secretType, secretType), eq(userSecrets.isActive, true)));
+    return secret || null;
+  }
+
+  async updateUserSecret(id: string, secretKey: string, config?: any): Promise<void> {
+    await db
+      .update(userSecrets)
+      .set({
+        secretKey,
+        config,
+        updatedAt: new Date(),
+      })
+      .where(eq(userSecrets.id, id));
+  }
+
+  async deleteUserSecret(id: string): Promise<void> {
+    await db
+      .update(userSecrets)
+      .set({
+        isActive: false,
+        updatedAt: new Date(),
+      })
+      .where(eq(userSecrets.id, id));
   }
 
   async createConnection(connection: InsertConnection & { userId: string }): Promise<Connection> {
