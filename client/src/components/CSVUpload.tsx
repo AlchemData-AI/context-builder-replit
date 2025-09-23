@@ -40,6 +40,10 @@ interface UploadResponse {
       name: string;
       description: string;
     }>;
+    failed?: Array<{
+      name: string;
+      reason: string;
+    }>;
   };
 }
 
@@ -111,8 +115,22 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
       }
       
       // Add persona creation results to the toast
-      if (data.personasCreated && data.personasCreated.count > 0) {
-        description += ` Created ${data.personasCreated.count} agent persona${data.personasCreated.count > 1 ? 's' : ''}: ${data.personasCreated.personas.map(p => p.name).join(', ')}.`;
+      if (data.personasCreated) {
+        if (data.personasCreated.count > 0) {
+          description += ` Created ${data.personasCreated.count} agent persona${data.personasCreated.count > 1 ? 's' : ''}: ${data.personasCreated.personas.map(p => p.name).join(', ')}.`;
+        }
+        
+        // Show warning for failed personas
+        if (data.personasCreated.failed && data.personasCreated.failed.length > 0) {
+          const failedNames = data.personasCreated.failed.map(f => `${f.name} (${f.reason})`).join(', ');
+          setTimeout(() => {
+            toast({
+              title: "Some Personas Failed",
+              description: `Could not create: ${failedNames}`,
+              variant: "destructive",
+            });
+          }, 1000);
+        }
       }
       
       toast({
@@ -129,9 +147,10 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
         fileInputRef.current.value = '';
       }
       
-      // Invalidate and refetch SME questions
+      // Invalidate and refetch SME questions and personas
       queryClient.invalidateQueries({ queryKey: ['/api/databases', databaseId, 'sme-questions'] });
       queryClient.invalidateQueries({ queryKey: ['/api/databases', databaseId, 'sme-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/databases', databaseId, 'personas'] });
       
       if (onUploadComplete) {
         onUploadComplete(data.progress);
@@ -232,6 +251,19 @@ export default function CSVUpload({ databaseId, onUploadComplete, className, 'da
         variant: "destructive",
       });
       return;
+    }
+    
+    // Validate persona definitions
+    if (definePersonas) {
+      const invalidPersonas = personas.filter(p => !p.name.trim() || !p.description.trim());
+      if (invalidPersonas.length > 0) {
+        toast({
+          title: "Invalid Personas",
+          description: "All personas must have both a name and description. Please fill in the missing fields.",
+          variant: "destructive",
+        });
+        return;
+      }
     }
     
     uploadMutation.mutate(selectedFile);

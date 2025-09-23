@@ -1484,33 +1484,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
           try {
             const personas = JSON.parse(personasData);
             const createdPersonas = [];
+            const failedPersonas = [];
             
-            console.log('Creating personas:', personas);
+            console.log(`Processing ${personas.length} personas for database ${id}`);
+            
+            // Get existing personas once to check for duplicates efficiently
+            const existingPersonas = await storage.getPersonasByDatabaseId(id);
+            const existingNames = new Set(existingPersonas.map(p => p.name.toLowerCase()));
+            const newlyCreatedNames = new Set<string>();
             
             for (const personaData of personas) {
-              if (personaData.name && personaData.description) {
-                const persona = await storage.createAgentPersona({
+              try {
+                // Validate using schema
+                const validatedData = insertAgentPersonaSchema.parse({
                   databaseId: id,
-                  name: personaData.name,
-                  description: personaData.description,
+                  name: personaData.name?.trim(),
+                  description: personaData.description?.trim(),
                   keywords: personaData.keywords || []
                 });
+                
+                // Check for duplicate name (existing or within this batch)
+                const nameLower = validatedData.name.toLowerCase();
+                if (existingNames.has(nameLower) || newlyCreatedNames.has(nameLower)) {
+                  failedPersonas.push({ name: validatedData.name, reason: 'Duplicate name' });
+                  continue;
+                }
+                
+                const persona = await storage.createAgentPersona(validatedData);
+                newlyCreatedNames.add(nameLower); // Track to prevent duplicates within this batch
                 createdPersonas.push({
                   id: persona.id,
                   name: persona.name,
                   description: persona.description
+                });
+              } catch (validationError) {
+                const personaName = personaData.name || 'Unknown';
+                failedPersonas.push({ 
+                  name: personaName, 
+                  reason: validationError instanceof Error ? validationError.message : 'Validation failed' 
                 });
               }
             }
             
             personasCreated = {
               count: createdPersonas.length,
-              personas: createdPersonas
+              personas: createdPersonas,
+              failed: failedPersonas.length > 0 ? failedPersonas : undefined
             };
             
-            console.log(`Created ${createdPersonas.length} personas for database ${id}`);
+            console.log(`Created ${createdPersonas.length} personas successfully, ${failedPersonas.length} failed for database ${id}`);
           } catch (error) {
-            console.error('Error creating personas:', error);
+            console.error('Error processing personas:', error);
             // Don't fail the entire upload if persona creation fails
           }
         }
