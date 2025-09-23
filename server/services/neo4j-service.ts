@@ -49,10 +49,10 @@ export interface RelationshipInfo {
 
 export class Neo4jService {
   private driver: Driver | null = null;
-  private database: string;
+  private database?: string;
 
   constructor() {
-    this.database = 'neo4j'; // default database
+    // Don't set default database - let Neo4j use its own default
   }
 
   async connect(config: Neo4jConfig): Promise<boolean> {
@@ -66,11 +66,13 @@ export class Neo4jService {
         this.database = config.database;
       }
 
-      // Test connection
-      const session = this.driver.session({ database: this.database });
+      // Test connection - only specify database if explicitly provided
+      const sessionConfig = this.database ? { database: this.database } : {};
+      const session = this.driver.session(sessionConfig);
       await session.run('RETURN 1');
       await session.close();
 
+      console.log('Neo4j connected successfully', this.database ? `to database: ${this.database}` : 'to default database');
       return true;
     } catch (error) {
       console.error('Neo4j connection failed:', error);
@@ -92,7 +94,9 @@ export class Neo4jService {
 
     const start = Date.now();
     try {
-      const session = this.driver.session({ database: this.database });
+      // Only specify database if explicitly provided
+      const sessionConfig = this.database ? { database: this.database } : {};
+      const session = this.driver.session(sessionConfig);
       await session.run('RETURN 1');
       await session.close();
       
@@ -107,7 +111,9 @@ export class Neo4jService {
     if (!this.driver) {
       throw new Error('Not connected to Neo4j');
     }
-    return this.driver.session({ database: this.database });
+    // Only specify database if explicitly provided
+    const sessionConfig = this.database ? { database: this.database } : {};
+    return this.driver.session(sessionConfig);
   }
 
   async createNamespace(namespace: string): Promise<void> {
