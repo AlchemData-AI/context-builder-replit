@@ -38,6 +38,8 @@ export interface ValueNode {
   id: string;
   value: string;
   frequency?: number;
+  aiContext?: string;
+  aiHypothesis?: string;
 }
 
 export interface RelationshipInfo {
@@ -213,13 +215,17 @@ export class Neo4jService {
         MERGE (v:Value {id: $valueId})
         SET v.value = $value,
             v.frequency = $frequency,
+            v.aiContext = $aiContext,
+            v.aiHypothesis = $aiHypothesis,
             v.createdAt = datetime()
         MERGE (c)-[:HAS_VALUE]->(v)
       `, {
         columnId,
         valueId: value.id,
         value: value.value || '',
-        frequency: value.frequency ?? 0
+        frequency: value.frequency ?? 0,
+        aiContext: value.aiContext || '',
+        aiHypothesis: value.aiHypothesis || ''
       });
     } finally {
       await session.close();

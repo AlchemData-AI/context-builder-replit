@@ -502,6 +502,57 @@ ${JSON.stringify(columnData.map(col => ({
       throw new Error(`Failed to generate context and questions: ${error}`);
     }
   }
+
+  async mergeColumnContextWithSMEFeedback(
+    columnName: string,
+    tableName: string,
+    originalAIDescription: string,
+    smeResponses: Array<{
+      questionText: string;
+      response: string;
+      questionType: string;
+    }>
+  ): Promise<string> {
+    try {
+      const systemPrompt = `You are an expert data analyst responsible for creating comprehensive column descriptions by combining AI analysis with Subject Matter Expert (SME) feedback.
+
+Your task is to create a refined, accurate description that incorporates both the original AI hypothesis and the validated SME responses.
+
+Rules:
+1. Start with the original AI description as your baseline
+2. Incorporate SME feedback to correct, refine, or expand the description
+3. If SME responses contradict the AI description, prioritize the SME input
+4. If SME responses provide additional context, integrate it seamlessly
+5. Maintain a professional, clear tone suitable for technical documentation
+6. Keep the description concise but comprehensive (2-3 sentences max)
+7. Focus on business purpose and meaning, not just technical details`;
+
+      const prompt = `
+**Column:** ${columnName} (in table: ${tableName})
+
+**Original AI Description:**
+${originalAIDescription}
+
+**SME Feedback:**
+${smeResponses.map(r => `Q: ${r.questionText}\nA: ${r.response}\nType: ${r.questionType}`).join('\n\n')}
+
+**Task:** Create a refined column description that incorporates the SME feedback while maintaining the valuable insights from the AI analysis. Return only the description text, no additional formatting.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-pro",
+        config: {
+          systemInstruction: systemPrompt
+        },
+        contents: prompt
+      });
+
+      return response.text?.trim() || originalAIDescription;
+    } catch (error) {
+      console.warn(`Failed to merge SME feedback for column ${columnName}:`, error);
+      return originalAIDescription; // Fallback to original description
+    }
+  }
+
   async generateEnumValueContext(
     tableName: string,
     columnName: string,
