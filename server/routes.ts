@@ -2350,6 +2350,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Debug endpoint to see all personas in Neo4j (temporary)
+  app.get('/api/debug/neo4j-personas', async (req, res) => {
+    try {
+      const { neo4jConnectionId } = req.query;
+      
+      if (!neo4jConnectionId) {
+        return res.status(400).json({ error: 'neo4jConnectionId is required' });
+      }
+
+      const neo4jConnection = await storage.getConnection(neo4jConnectionId as string);
+      if (!neo4jConnection || neo4jConnection.type !== 'neo4j') {
+        return res.status(404).json({ error: 'Neo4j connection not found' });
+      }
+
+      const connected = await neo4jService.connect(neo4jConnection.config as any);
+      if (!connected) {
+        return res.status(500).json({ error: "Failed to connect to Neo4j" });
+      }
+      
+      try {
+        // Query all personas regardless of namespace
+        const session = (neo4jService as any).getSession();
+        try {
+          const result = await session.run(`
+            MATCH (p:AgentPersona) 
+            RETURN p.name, p.namespace, p.id, p.description
+            ORDER BY p.namespace, p.name
+          `);
+          
+          const personas = result.records.map(record => ({
+            name: record.get('p.name'),
+            namespace: record.get('p.namespace'),
+            id: record.get('p.id'),
+            description: record.get('p.description')
+          }));
+          
+          res.json(personas);
+        } finally {
+          await session.close();
+        }
+      } finally {
+        await neo4jService.disconnect();
+      }
+    } catch (error) {
+      console.error('Debug query failed:', error);
+      res.status(500).json({ 
+        error: 'Failed to query Neo4j', 
+        details: error instanceof Error ? error.message : String(error) 
+      });
+    }
+  });
+
   // Add API 404 handler to prevent HTML confusion for API misses
   app.use('/api', (req, res) => {
     res.status(404).json({ 
