@@ -2190,7 +2190,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('Processing SME relationship questions for all personas...');
         
         for (const persona of personas) {
-          const personaQuestions = await storage.getSMEQuestionsByDatabaseId(id);
+          const personaQuestions = await storage.getQuestionsByDatabaseId(id);
           const relationshipQuestions = personaQuestions.filter((q: any) => q.isAnswered && q.questionType === 'relationship');
           
           console.log(`Processing ${relationshipQuestions.length} answered relationship questions for persona ${persona.name}`);
