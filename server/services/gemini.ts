@@ -102,7 +102,17 @@ Generate a JSON response with the following structure:
 
       const result = JSON.parse(response.text || "{}");
       return result as TableDescription;
-    } catch (error) {
+    } catch (error: any) {
+      // Handle quota exhaustion gracefully
+      if (error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('quota') || error?.message?.includes('429')) {
+        console.warn(`Gemini API quota exhausted for table ${tableName}. Returning fallback description.`);
+        return {
+          table_name: tableName,
+          description: `Table containing ${tableName} data - AI description unavailable due to quota limits`,
+          business_purpose: "Business context unavailable - requires AI API access",
+          data_characteristics: "Data patterns unavailable - requires AI analysis"
+        };
+      }
       throw new Error(`Failed to generate table description: ${error}`);
     }
   }
@@ -166,7 +176,18 @@ Return an array of these objects.`;
 
       const result = JSON.parse(response.text || "[]");
       return result as ColumnDescription[];
-    } catch (error) {
+    } catch (error: any) {
+      // Handle quota exhaustion gracefully  
+      if (error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('quota') || error?.message?.includes('429')) {
+        console.warn(`Gemini API quota exhausted for columns in ${tableName}. Returning fallback descriptions.`);
+        return columns.map(col => ({
+          column_name: col.name,
+          description: `${col.dataType} column - AI description unavailable due to quota limits`,
+          business_meaning: "Business context unavailable - requires AI API access",
+          data_patterns: `Data type: ${col.dataType}${col.cardinality ? `, Cardinality: ${col.cardinality}` : ''}`,
+          enum_values: []
+        }));
+      }
       throw new Error(`Failed to generate column descriptions: ${error}`);
     }
   }
