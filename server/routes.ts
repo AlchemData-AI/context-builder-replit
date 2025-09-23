@@ -2185,7 +2185,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
         
-        res.json({ success: true, namespace });
+        // Process SME relationship questions to create validated joins
+        let totalSMERelationships = 0;
+        console.log('Processing SME relationship questions for all personas...');
+        
+        for (const persona of personas) {
+          const personaQuestions = await storage.getSMEQuestionsByPersonaId(persona.id);
+          const relationshipQuestions = personaQuestions.filter((q: any) => q.isAnswered && q.questionType === 'relationship');
+          
+          console.log(`Processing ${relationshipQuestions.length} answered relationship questions for persona ${persona.name}`);
+          
+          for (const question of relationshipQuestions) {
+            try {
+              // Process validated join suggestions from SME responses
+              const joinInfo = await extractJoinInfoFromSMEResponse(question.questionText, question.response || '', id);
+              if (joinInfo) {
+                // Create SME-validated relationship in Neo4j
+                await neo4jService.createRelationship({
+                  fromId: joinInfo.fromId,
+                  toId: joinInfo.toId,
+                  type: 'SME_VALIDATED_JOIN',
+                  properties: {
+                    confidence: 0.9,
+                    source: 'SME',
+                    questionId: question.id
+                  }
+                });
+                
+                totalSMERelationships++;
+                console.log(`Created SME-validated relationship: ${joinInfo.fromId} -> ${joinInfo.toId} (question ${question.id})`);
+              } else {
+                console.log(`No join info extracted for question ${question.id} - response was not affirmative`);
+              }
+            } catch (error) {
+              console.error(`Failed to process relationship question ${question.id}:`, error);
+            }
+          }
+        }
+        
+        console.log(`Graph build completed. Total SME-validated relationships created: ${totalSMERelationships}`);
+        res.json({ success: true, namespace, smeRelationships: totalSMERelationships });
         
       } finally {
         await neo4jService.disconnect();
