@@ -343,6 +343,175 @@ ${truncatedStats}`;
     }
   }
 
+  async generateBatchedContextAndQuestions(
+    tables: Array<{
+      tableName: string;
+      schema: string;
+      sampleData: any[];
+      columnData: Array<{
+        name: string;
+        dataType: string;
+        sampleValues: any[];
+        cardinality?: number;
+        nullPercentage?: number;
+        distinctValues?: any[];
+      }>;
+      statisticalAnalysis: any;
+    }>
+  ): Promise<Array<{
+    table: {
+      table_name: string;
+      description: string;
+      business_purpose: string;
+      data_characteristics: string;
+    } | null;
+    columns: Array<{
+      column_name: string;
+      hypothesis: string;
+      questions: Array<{
+        question_text: string;
+        question_type: "yes_no" | "multiple_choice" | "free_text_definitions";
+        options?: string[];
+        priority: "high" | "medium" | "low";
+      }>;
+    }>;
+  }>> {
+    console.log(`Processing batch of ${tables.length} tables for context generation`);
+    
+    const systemPrompt = `You are an expert Data Analyst conducting a comprehensive analysis of multiple database tables simultaneously. Your task is twofold:
+
+1. **Generate AI Context**: Provide table-level business description and column-level hypotheses about the data's purpose and meaning for each table.
+2. **Generate SME Questions**: Create targeted questions for a Subject Matter Expert to validate your hypotheses and gather additional context.
+
+**Your Rules of Engagement:**
+1. For each table overall, provide a clear business description, purpose, and data characteristics.
+2. For each column, form a preliminary hypothesis about its purpose and business meaning.
+3. For columns with low cardinality (<=100 unique values), use the provided distinct values to inform your hypothesis.
+4. Generate 1-3 targeted questions per column to validate your hypotheses, especially for:
+   - Categorical columns with enum-like values
+   - Columns that appear to be identifiers or foreign keys  
+   - Columns with complex business logic (dates, monetary values, status codes)
+5. Questions should be actionable: yes/no, multiple-choice, or requests for definitions.
+6. Focus on understanding business context, not just technical details.
+7. Your output MUST be valid JSON with no additional text.
+8. Process ALL tables provided in the batch and return results for each.`;
+
+    // Build the batch prompt for all tables
+    const tablesPromptData = tables.map((table, index) => {
+      const truncatedSample = this.truncateText(JSON.stringify(table.sampleData, null, 2), 1500);
+      const truncatedStats = this.truncateText(JSON.stringify(table.statisticalAnalysis, null, 2), 800);
+      
+      return `**TABLE ${index + 1}:**
+Table: ${table.tableName}
+
+**Schema:**
+${table.schema}
+
+**Sample Data (${table.sampleData.length} rows):**
+${truncatedSample}
+
+**Statistical Analysis:**
+${truncatedStats}
+
+**Column Details with Enum Values:**
+${table.columnData.map(col => {
+  const distinctVals = col.distinctValues && col.cardinality && col.cardinality <= 100 
+    ? `\nDistinct Values: ${JSON.stringify(col.distinctValues.slice(0, 20))}${col.distinctValues.length > 20 ? '... (truncated)' : ''}`
+    : '';
+  return `- ${col.name} (${col.dataType}): Cardinality: ${col.cardinality || 'unknown'}, Null%: ${col.nullPercentage || 0}${distinctVals}`;
+}).join('\n')}`;
+    }).join('\n\n---\n\n');
+
+    const prompt = `**Batch Analysis Request for ${tables.length} Tables:**
+
+${tablesPromptData}
+
+**Required JSON Response Format:**
+{
+  "results": [
+    {
+      "table": {
+        "table_name": "exact_table_name_1",
+        "description": "Clear business description",
+        "business_purpose": "What this table is used for",
+        "data_characteristics": "Key data patterns and insights"
+      },
+      "columns": [
+        {
+          "column_name": "exact_column_name",
+          "hypothesis": "Your hypothesis about this column's purpose",
+          "questions": [
+            {
+              "question_text": "Specific question for SME validation",
+              "question_type": "yes_no",
+              "priority": "high"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+Generate complete analysis for ALL ${tables.length} tables provided.`;
+
+    try {
+      const response = await this.ai.models.generateContent({
+        model: "gemini-2.5-pro",
+        config: {
+          systemInstruction: systemPrompt
+        },
+        contents: prompt
+      });
+
+      const result = JSON.parse(response.text || "{}");
+      console.log(`Batch processing completed for ${tables.length} tables`);
+      
+      if (!result.results || !Array.isArray(result.results)) {
+        throw new Error('Invalid batch response format from Gemini');
+      }
+      
+      return result.results;
+    } catch (error) {
+      console.error(`Batch context generation failed for ${tables.length} tables:`, error);
+      // Fallback to individual processing if batch fails
+      console.log('Falling back to individual table processing...');
+      const results = [];
+      for (const table of tables) {
+        try {
+          const individualResult = await this.generateContextAndQuestions(
+            table.tableName,
+            table.schema,
+            table.sampleData,
+            table.columnData,
+            table.statisticalAnalysis
+          );
+          results.push(individualResult);
+        } catch (individualError) {
+          console.error(`Failed to process table ${table.tableName}:`, individualError);
+          results.push({
+            table: {
+              table_name: table.tableName,
+              description: `Error processing table: ${individualError}`,
+              business_purpose: "Unknown due to processing error",
+              data_characteristics: "Unable to analyze"
+            },
+            columns: table.columnData.map(col => ({
+              column_name: col.name,
+              hypothesis: "Unable to generate hypothesis due to processing error",
+              questions: [{
+                question_text: `What is the business purpose of the ${col.name} column?`,
+                question_type: "free_text_definitions" as const,
+                priority: "medium" as const
+              }]
+            }))
+          });
+        }
+      }
+      return results;
+    }
+  }
+
   async generateContextAndQuestions(
     tableName: string,
     schema: string,
