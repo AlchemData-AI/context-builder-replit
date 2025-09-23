@@ -39,11 +39,14 @@ export class SchemaAnalyzer {
 
     try {
       // Get all tables
+      console.log(`🔍 Schema analysis: Looking for tables in schema '${database.schema || 'public'}'`);
       const tables = await postgresAnalyzer.getTables(database.schema || 'public');
+      console.log(`🔍 Schema analysis: Found ${tables.length} tables:`, tables.map(t => `${t.schemaName}.${t.tableName}`));
       
       // Get existing tables to avoid duplicates
       const existingTables = await storage.getTablesByDatabaseId(databaseId);
       const existingTableNames = new Set(existingTables.map(t => `${t.schema}.${t.name}`));
+      console.log(`🔍 Schema analysis: ${existingTables.length} existing tables in storage:`, Array.from(existingTableNames));
 
       // Store tables in database and populate their columns
       for (const tableInfo of tables) {
