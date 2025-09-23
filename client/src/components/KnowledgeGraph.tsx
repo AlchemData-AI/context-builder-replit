@@ -24,7 +24,6 @@ interface AgentPersona {
 
 export default function KnowledgeGraph() {
   const { toast } = useToast();
-  const [selectedNeo4jConnection, setSelectedNeo4jConnection] = useState<string>("");
   const [graphStats, setGraphStats] = useState<GraphStats | null>(null);
 
   // Get connections
@@ -78,10 +77,8 @@ export default function KnowledgeGraph() {
 
   // Build knowledge graph mutation
   const buildGraph = useMutation({
-    mutationFn: async (neo4jConnectionId: string) => {
-      const response = await apiRequest('POST', `/api/databases/${database.id}/build-graph`, {
-        neo4jConnectionId
-      });
+    mutationFn: async () => {
+      const response = await apiRequest('POST', `/api/databases/${database.id}/build-graph`, {});
       return response.json();
     },
     onSuccess: (data) => {
@@ -98,12 +95,10 @@ export default function KnowledgeGraph() {
 
   // Fetch graph statistics
   const fetchGraphStats = async () => {
-    if (!database || !selectedNeo4jConnection) return;
+    if (!database) return;
     
     try {
-      const response = await fetch(
-        `/api/databases/${database.id}/graph-stats?neo4jConnectionId=${selectedNeo4jConnection}`
-      );
+      const response = await fetch(`/api/databases/${database.id}/graph-stats`);
       if (response.ok) {
         const stats = await response.json();
         setGraphStats(stats);
@@ -113,29 +108,12 @@ export default function KnowledgeGraph() {
     }
   };
 
-  // Auto-select connected Neo4j connection
+  // Auto-fetch graph stats when database and Neo4j are available
   useEffect(() => {
-    if (connectedNeo4j && !selectedNeo4jConnection) {
-      setSelectedNeo4jConnection(connectedNeo4j.id);
-      // Delay fetching stats to ensure the connection is properly set
-      const timer = setTimeout(async () => {
-        if (!database) return;
-        
-        try {
-          const response = await fetch(
-            `/api/databases/${database.id}/graph-stats?neo4jConnectionId=${connectedNeo4j.id}`
-          );
-          if (response.ok) {
-            const stats = await response.json();
-            setGraphStats(stats);
-          }
-        } catch (error) {
-          console.error('Failed to fetch graph stats:', error);
-        }
-      }, 1000);
-      return () => clearTimeout(timer);
+    if (database && connectedNeo4j) {
+      fetchGraphStats();
     }
-  }, [connectedNeo4j?.id, selectedNeo4jConnection, database?.id]);
+  }, [database, connectedNeo4j]);
 
   const getPersonaColor = (index: number) => {
     const colors = ['purple', 'blue', 'green', 'amber', 'pink'];
@@ -143,11 +121,7 @@ export default function KnowledgeGraph() {
   };
 
   const handleBuildGraph = () => {
-    if (!selectedNeo4jConnection) {
-      toast({ title: "Neo4j connection required", description: "Please select a Neo4j connection first", variant: "destructive" });
-      return;
-    }
-    buildGraph.mutate(selectedNeo4jConnection);
+    buildGraph.mutate();
   };
 
   if (!database) {
@@ -171,7 +145,7 @@ export default function KnowledgeGraph() {
           <Button 
             variant="outline"
             onClick={fetchGraphStats}
-            disabled={!selectedNeo4jConnection}
+            disabled={!connectedNeo4j}
             data-testid="button-view-graph"
           >
             <i className="fas fa-eye mr-2"></i>
@@ -218,24 +192,18 @@ export default function KnowledgeGraph() {
               <label className="text-sm font-medium text-muted-foreground block mb-2">
                 Neo4j Connection
               </label>
-              <Select 
-                value={selectedNeo4jConnection} 
-                onValueChange={(value) => {
-                  setSelectedNeo4jConnection(value);
-                  setTimeout(() => fetchGraphStats(), 500);
-                }}
-              >
-                <SelectTrigger className="w-full" data-testid="select-neo4j-connection">
-                  <SelectValue placeholder="Select Neo4j connection" />
-                </SelectTrigger>
-                <SelectContent>
-                  {neo4jConnections.map((conn: any) => (
-                    <SelectItem key={conn.id} value={conn.id}>
-                      {conn.name} ({conn.status})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="w-full p-3 bg-gray-50 border border-gray-200 rounded-md" data-testid="auto-neo4j-connection">
+                <div className="flex items-center text-sm">
+                  <i className="fas fa-magic mr-2 text-blue-500"></i>
+                  <span className="text-gray-700">Automatically selected based on environment</span>
+                </div>
+                {connectedNeo4j && (
+                  <div className="flex items-center mt-1 text-xs text-green-600">
+                    <i className="fas fa-check-circle mr-1"></i>
+                    <span>Connected to: {connectedNeo4j.name}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
             {!connectedNeo4j && (
@@ -347,9 +315,7 @@ export default function KnowledgeGraph() {
           <CardContent>
             {!graphStats ? (
               <div className="text-center py-8 text-muted-foreground">
-                {selectedNeo4jConnection 
-                  ? "Click 'Build Graph' to create the knowledge graph"
-                  : "Select a Neo4j connection to view statistics"}
+                <p>Click 'Build Graph' to create the knowledge graph</p>
               </div>
             ) : (
               <>
