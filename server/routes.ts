@@ -1535,6 +1535,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   async function performIncrementalUpdate(databaseId: string, namespace: string) {
     console.log('Performing incremental knowledge graph update for database:', databaseId);
     
+    // First, sync any missing personas from PostgreSQL to Neo4j
+    console.log('Syncing personas from PostgreSQL to Neo4j...');
+    const personas = await storage.getPersonasByDatabaseId(databaseId);
+    console.log(`Found ${personas.length} personas in PostgreSQL`);
+    
+    for (const persona of personas) {
+      console.log(`Creating persona in Neo4j: ${persona.name} (${persona.id})`);
+      await neo4jService.createAgentPersona({
+        id: persona.id,
+        name: persona.name,
+        description: persona.description,
+        keywords: Array.isArray(persona.keywords) ? persona.keywords as string[] : [],
+        namespace
+      });
+    }
+    
     let stats = await neo4jService.getNamespaceStatistics(namespace);
     
     // Get SME questions and answers
