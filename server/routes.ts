@@ -1572,6 +1572,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const tables = await storage.getSelectedTables(databaseId);
     console.log(`Found ${tables.length} selected tables to link`);
     
+    let tablesLinked = 0;
+    
     for (const persona of personas) {
       for (const table of tables) {
         console.log(`🔗 [SYNC] Linking table ${table.name} to persona ${persona.name}`);
@@ -1583,10 +1585,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           rowCount: table.rowCount ?? undefined,
           columnCount: table.columnCount ?? undefined
         });
+        tablesLinked++;
       }
     }
     
-    console.log(`✅ [SYNC] Table linking completed: ${tables.length} tables linked to ${personas.length} personas`);
+    // Create column nodes for all tables (outside persona loop for efficiency)
+    console.log('🔄 [SYNC] Creating column nodes for all tables...');
+    let columnsCreated = 0;
+    
+    for (const table of tables) {
+      const columns = await storage.getColumnsByTableId(table.id);
+      console.log(`🔗 [SYNC] Creating ${columns.length} column nodes for table ${table.name}`);
+      
+      for (const column of columns) {
+        await neo4jService.createColumnNode(table.id, {
+          id: column.id,
+          name: column.name,
+          dataType: column.dataType,
+          description: column.aiDescription || `Column ${column.name} in table ${table.name}`,
+          isNullable: column.isNullable || false,
+          cardinality: column.cardinality || 0,
+          nullPercentage: column.nullPercentage || 0
+        });
+        columnsCreated++;
+      }
+    }
+    
+    console.log(`✅ [SYNC] Incremental update completed: ${tablesLinked} table links and ${columnsCreated} columns created for ${personas.length} personas`);
     
     let stats = await neo4jService.getNamespaceStatistics(namespace);
     
