@@ -1541,15 +1541,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.log(`Found ${personas.length} personas in PostgreSQL`);
     
     for (const persona of personas) {
-      console.log(`Creating persona in Neo4j: ${persona.name} (${persona.id})`);
-      await neo4jService.createAgentPersona({
+      console.log(`🔄 [SYNC] Creating persona in Neo4j: ${persona.name} (${persona.id})`);
+      console.log('🔄 [SYNC] Persona data from PostgreSQL:', {
         id: persona.id,
         name: persona.name,
         description: persona.description,
-        keywords: Array.isArray(persona.keywords) ? persona.keywords as string[] : [],
-        namespace
+        keywords: persona.keywords,
+        databaseId: persona.databaseId
       });
+      
+      try {
+        await neo4jService.createAgentPersona({
+          id: persona.id,
+          name: persona.name,
+          description: persona.description,
+          keywords: Array.isArray(persona.keywords) ? persona.keywords as string[] : [],
+          namespace
+        });
+        console.log(`✅ [SYNC] Successfully synced persona: ${persona.name}`);
+      } catch (error) {
+        console.error(`❌ [SYNC] Failed to sync persona: ${persona.name}`, error);
+        throw error;
+      }
     }
+    
+    console.log(`🎉 [SYNC] Persona sync completed: ${personas.length} personas processed`);
     
     let stats = await neo4jService.getNamespaceStatistics(namespace);
     

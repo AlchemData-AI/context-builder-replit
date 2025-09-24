@@ -131,21 +131,50 @@ export class Neo4jService {
   }
 
   async createAgentPersona(persona: AgentPersonaNode): Promise<void> {
+    console.log('📝 [NEO4J] Creating AgentPersona with data:', {
+      id: persona.id,
+      name: persona.name,
+      description: persona.description,
+      keywords: persona.keywords,
+      namespace: persona.namespace
+    });
+
     const session = this.getSession();
     try {
-      await session.run(`
+      const cypher = `
         MERGE (p:AgentPersona {id: $id, namespace: $namespace})
         SET p.name = $name,
             p.description = $description,
             p.keywords = $keywords,
             p.createdAt = datetime()
-      `, {
+      `;
+      
+      const parameters = {
         id: persona.id,
         name: persona.name,
         description: persona.description,
         keywords: persona.keywords,
         namespace: persona.namespace
+      };
+      
+      console.log('📝 [NEO4J] Executing Cypher:', cypher);
+      console.log('📝 [NEO4J] Parameters:', parameters);
+      
+      const result = await session.run(cypher, parameters);
+      
+      console.log('✅ [NEO4J] AgentPersona created successfully:', {
+        name: persona.name,
+        id: persona.id,
+        summary: result.summary
       });
+      
+    } catch (error) {
+      console.error('❌ [NEO4J] Failed to create AgentPersona:', {
+        name: persona.name,
+        id: persona.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
     } finally {
       await session.close();
     }
