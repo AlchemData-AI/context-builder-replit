@@ -1567,6 +1567,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     console.log(`🎉 [SYNC] Persona sync completed: ${personas.length} personas processed`);
     
+    // Sync tables and their relationships to personas
+    console.log('🔄 [SYNC] Creating table nodes and linking to personas...');
+    const tables = await storage.getSelectedTables(databaseId);
+    console.log(`Found ${tables.length} selected tables to link`);
+    
+    for (const persona of personas) {
+      for (const table of tables) {
+        console.log(`🔗 [SYNC] Linking table ${table.name} to persona ${persona.name}`);
+        await neo4jService.createTableNode(persona.id, {
+          id: table.id,
+          name: table.name,
+          schema: table.schema,
+          description: `Table containing ${table.columnCount || 0} columns with data analysis context`,
+          rowCount: table.rowCount ?? undefined,
+          columnCount: table.columnCount ?? undefined
+        });
+      }
+    }
+    
+    console.log(`✅ [SYNC] Table linking completed: ${tables.length} tables linked to ${personas.length} personas`);
+    
     let stats = await neo4jService.getNamespaceStatistics(namespace);
     
     // Get SME questions and answers
