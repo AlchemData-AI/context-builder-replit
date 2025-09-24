@@ -1592,6 +1592,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Create column nodes for all tables (outside persona loop for efficiency)
     console.log('🔄 [SYNC] Creating column nodes for all tables...');
     let columnsCreated = 0;
+    let valuesCreated = 0;
     
     for (const table of tables) {
       const columns = await storage.getColumnsByTableId(table.id);
@@ -1608,10 +1609,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
           nullPercentage: typeof column.nullPercentage === 'number' ? column.nullPercentage : (parseFloat(String(column.nullPercentage)) || 0)
         });
         columnsCreated++;
+        
+        // Create Value nodes for low-cardinality columns with AI context from enum values
+        console.log(`[DEBUG] [SYNC] Column ${column.name}: cardinality=${column.cardinality}, hasDistinctValues=${!!column.distinctValues}`);
+        if (column.cardinality && column.cardinality < 100 && column.distinctValues) {
+          console.log(`[DEBUG] ✓ [SYNC] Column ${column.name} PASSED condition check - will create value nodes`);
+          // Get enum values with AI context if they exist
+          const enumValues = await storage.getEnumValuesByColumnId(column.id);
+          const enumValueMap = new Map();
+          enumValues.forEach((ev: any) => {
+            enumValueMap.set(ev.value, { aiContext: ev.aiContext, aiHypothesis: ev.aiHypothesis });
+          });
+          
+          let values = [];
+          let valueNodesCreated = 0;
+          let valueNodesWithContext = 0;
+          
+          // Try multiple parsing strategies for distinctValues
+          try {
+            values = JSON.parse(String(column.distinctValues));
+          } catch (jsonError) {
+            // Fallback: try CSV parsing for comma-separated values
+            try {
+              values = String(column.distinctValues).split(',').map(v => v.trim()).filter(v => v.length > 0);
+              console.log(`Used CSV fallback for column ${column.name}: ${values.length} values`);
+            } catch (csvError) {
+              // Final fallback: semicolon or newline separated
+              values = String(column.distinctValues).split(/[;\n]/).map(v => v.trim()).filter(v => v.length > 0);
+              console.log(`Used delimiter fallback for column ${column.name}: ${values.length} values`);
+            }
+          }
+          
+          if (!Array.isArray(values) || values.length === 0) {
+            console.warn(`No parseable values found for column ${column.name}, skipping value nodes`);
+          } else {
+            for (const value of values) {
+              const enumData = enumValueMap.get(String(value));
+              await neo4jService.createValueNode(column.id, {
+                id: `${column.id}_${value}`,
+                value: String(value),
+                aiContext: enumData?.aiContext,
+                aiHypothesis: enumData?.aiHypothesis
+              });
+              valueNodesCreated++;
+              if (enumData?.aiContext || enumData?.aiHypothesis) {
+                valueNodesWithContext++;
+              }
+            }
+            
+            valuesCreated += valueNodesCreated;
+            console.log(`Created ${valueNodesCreated} value nodes for column ${column.name} (${valueNodesWithContext} with AI context)`);
+          }
+        }
       }
     }
     
-    console.log(`✅ [SYNC] Incremental update completed: ${tablesLinked} table links and ${columnsCreated} columns created for ${personas.length} personas`);
+    console.log(`✅ [SYNC] Incremental update completed: ${tablesLinked} table links, ${columnsCreated} columns, and ${valuesCreated} value nodes created for ${personas.length} personas`);
     
     let stats = await neo4jService.getNamespaceStatistics(namespace);
     
