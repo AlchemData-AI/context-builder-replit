@@ -1604,8 +1604,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           dataType: column.dataType,
           description: column.aiDescription || `Column ${column.name} in table ${table.name}`,
           isNullable: column.isNullable || false,
-          cardinality: column.cardinality || 0,
-          nullPercentage: column.nullPercentage || 0
+          cardinality: typeof column.cardinality === 'number' ? column.cardinality : (parseInt(String(column.cardinality)) || 0),
+          nullPercentage: typeof column.nullPercentage === 'number' ? column.nullPercentage : (parseFloat(String(column.nullPercentage)) || 0)
         });
         columnsCreated++;
       }
