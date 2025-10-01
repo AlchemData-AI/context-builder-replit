@@ -333,7 +333,7 @@ export class SMEInterviewService {
     return `CREATE TABLE ${table.schema}.${table.name} (\n${columnDefs}\n);`;
   }
 
-  private isTimestampColumn(column: Column): boolean {
+  public isTimestampColumn(column: Column): boolean {
     // Check data type (case-insensitive) - most reliable indicator
     const dataType = column.dataType.toLowerCase();
     const timestampTypes = [
@@ -379,7 +379,7 @@ export class SMEInterviewService {
     return false;
   }
 
-  private isHighCardinalityColumn(column: Column, table: Table): boolean {
+  public isHighCardinalityColumn(column: Column, table: Table): boolean {
     // If cardinality or row count is not available, don't filter
     if (!column.cardinality || !table.rowCount) {
       console.log(`⚠️  Cannot calculate cardinality ratio for ${table.name}.${column.name} - cardinality: ${column.cardinality}, rowCount: ${table.rowCount}`);
