@@ -42,11 +42,30 @@ Implemented a new shared node architecture in Neo4j where a single canonical nod
 - **Global relationships**: Foreign keys discovered in any persona automatically apply to all
 - **Backward compatibility**: Fully maintained - no breaking changes to existing functionality
 
+3. **Context Reuse Service (Task 3 - Complete)**
+   - Checks Neo4j for existing canonical nodes before making LLM calls
+   - Graceful fallback if Neo4j unavailable
+   - Last-wins persistence strategy for conflicting descriptions
+   - Cost savings logging shows reused vs. regenerated context
+   - Force regeneration option available
+
+4. **Shared FK Relationships (Task 4 - Complete)**
+   - Foreign key relationships use canonical column keys in shared mode
+   - FKs discovered in one persona automatically apply to all personas
+   - Validation ensures columns exist before creating relationships
+   - Backward compatible - legacy mode uses original id-based relationships
+
+5. **Cross-Model Discovery (Task 5 - Complete)**
+   - Automatic detection of overlapping tables across personas
+   - Generates SME questions for cross-model relationship validation
+   - Self-overlap filtering prevents false positives
+   - Optimized queries (no N+1) with persona details included
+   - Non-fatal - persona creation never fails due to discovery errors
+
 ### Pending Tasks
-- Task 3: Add context reuse service to check existing nodes before LLM calls
-- Task 4: Update FK relationship creation to use shared column nodes
-- Task 5: Implement cross-model discovery during persona creation
-- Task 6-8: Migration, deduplication, and testing
+- Task 6: Add backfill migration for existing Neo4j nodes
+- Task 7: Create deduplication service for existing duplicate nodes
+- Task 8: Test shared node architecture with existing data
 
 # User Preferences
 
