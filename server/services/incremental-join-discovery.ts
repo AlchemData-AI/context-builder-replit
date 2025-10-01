@@ -1,5 +1,6 @@
 import { storage } from '../storage';
 import type { Table, Column } from '@shared/schema';
+import { PostgresAnalyzer } from './postgres-analyzer';
 
 interface ForeignKeyConstraint {
   fromTableId: string;
@@ -113,12 +114,74 @@ export class IncrementalJoinDiscoveryService {
     
     // Get table details
     const tables = await this.getTablesByIds(tableIds);
-    const tableNameMap = new Map(tables.map(t => [t.name, t]));
+    if (tables.length === 0) {
+      return fks;
+    }
     
-    // Query pg_catalog for FK constraints
-    // This will be implemented when we enhance the PostgreSQL analyzer
-    // For now, return empty array and rely on semantic analysis
-    console.log('ℹ️  Postgres catalog FK extraction pending (Task 2)');
+    const tableNameMap = new Map(tables.map(t => [t.name.toLowerCase(), t]));
+    
+    // Get all tables in the database to map FK targets
+    const allTables = await storage.getTablesByDatabaseId(databaseId);
+    const allTableNameMap = new Map(allTables.map(t => [t.name.toLowerCase(), t]));
+    
+    // Connect to PostgreSQL and extract FK constraints
+    const analyzer = new PostgresAnalyzer();
+    try {
+      const connected = await analyzer.connect(connection.config as any);
+      if (!connected) {
+        console.warn('⚠️  Failed to connect to PostgreSQL for FK extraction');
+        return fks;
+      }
+      
+      // Query FK constraints from information_schema
+      const schemaName = database.schema || 'public';
+      const catalogFks = await analyzer.getForeignKeys(schemaName);
+      
+      console.log(`📋 Found ${catalogFks.length} FK constraints in ${schemaName} schema`);
+      
+      // Filter and map FKs that involve our new tables
+      for (const catalogFk of catalogFks) {
+        const fromTable = tableNameMap.get(catalogFk.fromTable.toLowerCase());
+        const toTable = allTableNameMap.get(catalogFk.toTable.toLowerCase());
+        
+        if (!fromTable || !toTable) {
+          continue; // Skip if tables not found in our storage
+        }
+        
+        // Get column IDs
+        const fromColumns = await storage.getColumnsByTableId(fromTable.id);
+        const toColumns = await storage.getColumnsByTableId(toTable.id);
+        
+        const fromColumn = fromColumns.find(c => c.name.toLowerCase() === catalogFk.fromColumn.toLowerCase());
+        const toColumn = toColumns.find(c => c.name.toLowerCase() === catalogFk.toColumn.toLowerCase());
+        
+        if (!fromColumn || !toColumn) {
+          console.warn(`⚠️  Columns not found for FK: ${catalogFk.fromTable}.${catalogFk.fromColumn} → ${catalogFk.toTable}.${catalogFk.toColumn}`);
+          continue;
+        }
+        
+        fks.push({
+          fromTableId: fromTable.id,
+          fromTableName: fromTable.name,
+          fromColumnId: fromColumn.id,
+          fromColumnName: fromColumn.name,
+          toTableId: toTable.id,
+          toTableName: toTable.name,
+          toColumnId: toColumn.id,
+          toColumnName: toColumn.name,
+          confidence: 1.0, // Catalog constraints are 100% certain
+          source: 'pg_catalog',
+          reasoning: `Foreign key constraint: ${catalogFk.constraintName}`
+        });
+        
+        console.log(`✓ Catalog FK: ${fromTable.name}.${fromColumn.name} → ${toTable.name}.${toColumn.name} (constraint: ${catalogFk.constraintName})`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Failed to extract FK constraints from PostgreSQL:', error);
+    } finally {
+      await analyzer.disconnect();
+    }
     
     return fks;
   }
