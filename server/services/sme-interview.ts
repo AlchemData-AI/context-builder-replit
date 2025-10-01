@@ -106,6 +106,7 @@ export class SMEInterviewService {
 
         // Skip timestamp/date columns - they don't need business logic clarification
         if (this.isTimestampColumn(column)) {
+          console.log(`⏭️  Skipping timestamp column: ${table.name}.${column.name} (${column.dataType})`);
           continue;
         }
 
