@@ -50,7 +50,14 @@ export class IncrementalJoinDiscoveryService {
     const allSelectedTables = await storage.getSelectedTables(databaseId);
     const existingTables = allSelectedTables.filter(t => !newTableIds.includes(t.id));
     
-    console.log(`✓ Found ${newTables.length} new tables and ${existingTables.length} existing tables`);
+    // Check if this is a full-database discovery (all tables are "new")
+    const isFullDiscovery = existingTables.length === 0 && newTables.length === allSelectedTables.length;
+    
+    if (isFullDiscovery) {
+      console.log(`🔄 Full-database discovery mode: analyzing all ${newTables.length} tables`);
+    } else {
+      console.log(`✓ Found ${newTables.length} new tables and ${existingTables.length} existing tables`);
+    }
     
     // Step 1: Extract actual FK constraints from Postgres metadata (fast, free, precise)
     console.log('📋 Step 1: Checking Postgres catalog for FK constraints...');
@@ -58,13 +65,24 @@ export class IncrementalJoinDiscoveryService {
     discoveredFks.push(...catalogFks);
     console.log(`✓ Found ${catalogFks.length} FK constraints from Postgres catalog`);
     
-    // Step 2: Run semantic analysis for new tables × existing tables (limited scope)
-    console.log('🧠 Step 2: Running semantic analysis (new × existing tables)...');
-    const semanticFks = await this.runIncrementalSemanticAnalysis(
-      newTables,
-      existingTables,
-      discoveredFks // Pass catalog FKs to avoid duplicates
-    );
+    // Step 2: Run semantic analysis
+    console.log('🧠 Step 2: Running semantic analysis...');
+    let semanticFks: ForeignKeyConstraint[] = [];
+    
+    if (isFullDiscovery) {
+      // Full discovery: analyze all tables pairwise
+      console.log('🔄 Running full pairwise semantic analysis');
+      semanticFks = await this.runFullSemanticAnalysis(newTables, discoveredFks);
+    } else {
+      // Incremental: analyze new × existing only
+      console.log('📊 Running incremental semantic analysis (new × existing)');
+      semanticFks = await this.runIncrementalSemanticAnalysis(
+        newTables,
+        existingTables,
+        discoveredFks
+      );
+    }
+    
     discoveredFks.push(...semanticFks);
     console.log(`✓ Found ${semanticFks.length} candidate FKs from semantic analysis`);
     
@@ -236,6 +254,50 @@ export class IncrementalJoinDiscoveryService {
     
     // Note: Intra-persona joins (new × new) are handled by the standard
     // semantic analyzer when all tables are selected together
+    
+    return candidates;
+  }
+  
+  /**
+   * Run full semantic analysis for all tables pairwise (used during initial discovery)
+   */
+  private async runFullSemanticAnalysis(
+    tables: Table[],
+    existingFks: ForeignKeyConstraint[]
+  ): Promise<ForeignKeyConstraint[]> {
+    const candidates: ForeignKeyConstraint[] = [];
+    
+    if (tables.length < 2) {
+      return candidates;
+    }
+    
+    // Get columns for all tables
+    const tableColumns = new Map<string, Column[]>();
+    for (const table of tables) {
+      const columns = await storage.getColumnsByTableId(table.id);
+      tableColumns.set(table.id, columns);
+    }
+    
+    // Analyze all table pairs (avoid duplicate pairs by using i < j)
+    for (let i = 0; i < tables.length; i++) {
+      const table1 = tables[i];
+      const cols1 = tableColumns.get(table1.id) || [];
+      
+      for (let j = i + 1; j < tables.length; j++) {
+        const table2 = tables[j];
+        const cols2 = tableColumns.get(table2.id) || [];
+        
+        // Find FK candidates in both directions
+        const candidates1to2 = this.findJoinCandidatesHeuristic(
+          table1, cols1, table2, cols2, existingFks
+        );
+        const candidates2to1 = this.findJoinCandidatesHeuristic(
+          table2, cols2, table1, cols1, existingFks
+        );
+        
+        candidates.push(...candidates1to2, ...candidates2to1);
+      }
+    }
     
     return candidates;
   }

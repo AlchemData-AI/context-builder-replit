@@ -12,6 +12,7 @@ import { smeInterviewService } from "./services/sme-interview";
 import { neo4jBackfillService } from "./services/neo4j-backfill";
 import { neo4jDeduplicationService } from "./services/neo4j-deduplication";
 import { EnvironmentService } from "./services/environment-service";
+import { incrementalJoinDiscovery } from "./services/incremental-join-discovery";
 import { insertConnectionSchema, insertDatabaseSchema, insertTableSchema, insertAgentPersonaSchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -1912,6 +1913,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
+  /**
+   * Perform incremental join discovery for a database
+   * Analyzes all selected tables to find FK relationships
+   */
+  async function performIncrementalJoinDiscovery(databaseId: string, newTableIds?: string[]) {
+    try {
+      console.log(`🔗 Starting incremental join discovery for database ${databaseId}`);
+      
+      // Get all selected tables
+      const selectedTables = await storage.getSelectedTables(databaseId);
+      console.log(`📋 Database has ${selectedTables.length} selected tables`);
+      
+      if (selectedTables.length === 0) {
+        console.log('✓ No tables selected, skipping incremental join discovery');
+        return;
+      }
+      
+      // If specific new tables provided, use those; otherwise use all selected tables
+      const tableIdsToAnalyze = newTableIds && newTableIds.length > 0 
+        ? newTableIds 
+        : selectedTables.map(t => t.id);
+      
+      // Run incremental join discovery
+      const result = await incrementalJoinDiscovery.discoverJoins(databaseId, tableIdsToAnalyze);
+      
+      console.log(`✅ Incremental join discovery complete:`, {
+        totalDiscovered: result.discoveredFks.length,
+        persistedCount: result.persistedCount,
+        smeQuestionsCount: result.smeQuestionsCount,
+        skippedCount: result.skippedCount
+      });
+      
+      return result;
+    } catch (error) {
+      // Fail gracefully
+      console.error('❌ Incremental join discovery failed (non-fatal):', error instanceof Error ? error.message : error);
+    }
+  }
+
   // Enhanced knowledge graph building function that incorporates SME responses (for new graphs)
   async function buildEnhancedKnowledgeGraph(databaseId: string) {
     const startTime = Date.now();
@@ -1920,6 +1960,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Create namespace for this database
     const namespace = `database_${databaseId}`;
     await neo4jService.createNamespace(namespace);
+    
+    // Run incremental join discovery before building the graph
+    console.log('Running incremental join discovery at', Date.now() - startTime + 'ms');
+    try {
+      await performIncrementalJoinDiscovery(databaseId);
+    } catch (error) {
+      console.error('Incremental join discovery failed (non-fatal):', error);
+    }
     
     // Get personas and their tables
     console.log('Fetching personas at', Date.now() - startTime + 'ms');
@@ -2214,6 +2262,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 
                 const persona = await storage.createAgentPersona(validatedData);
                 newlyCreatedNames.add(nameLower); // Track to prevent duplicates within this batch
+                
                 createdPersonas.push({
                   id: persona.id,
                   name: persona.name,
