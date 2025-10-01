@@ -372,7 +372,20 @@ export class SMEInterviewService {
       return result;
     };
 
-    const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().replace(/['"]/g, ''));
+    // Check if this is a FOREIGN_KEY section (skip it for SME processing)
+    const firstLine = parseCSVLine(lines[0]);
+    const firstLineHeaders = firstLine.map(h => h.toLowerCase().replace(/['"]/g, '').trim());
+    const isFKSection = firstLineHeaders[0] === 'section' && 
+                       firstLineHeaders.some(h => h.includes('fk_id')) &&
+                       firstLineHeaders.some(h => h.includes('validation_response'));
+    
+    if (isFKSection) {
+      console.log('Detected FOREIGN_KEY section in CSV, skipping SME question processing for this section');
+      // Return empty result - FK processor will handle this
+      return { processed: 0, updated: 0 };
+    }
+    
+    const headers = firstLineHeaders;
     
     // Look for question and response columns with more flexible matching
     const possibleQuestionHeaders = ['question', 'question_text', 'questiontext', 'prompt', 'query'];
