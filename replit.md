@@ -97,6 +97,23 @@ This would auto-reject descriptive columns (title, description) before creating 
 - Current result: 34 "FKs" discovered (includes false positives)
 - Expected result after fix: ~5-10 real FKs (id, nct_id, result_group_id, etc.)
 
+## SME Question Filtering - October 1, 2025
+
+### Implemented Filters
+To reduce noise and improve SME question quality, the following filters are applied during question generation:
+
+1. **Timestamp/Date Column Filter**: Excludes columns with temporal data types (timestamp, date, time, interval) and common temporal column names (created_at, updated_at, date_partition_delta, etc.)
+
+2. **High-Cardinality Filter** (NEW): Excludes columns where cardinality ratio >= 20%
+   - **Calculation**: cardinality ratio = (distinct values / total rows)
+   - **Purpose**: Filters out IDs, order IDs, and other near-unique columns that don't need business logic validation
+   - **Examples filtered**: order_id, transaction_id, date_partition_delta (if not caught by timestamp filter)
+   - **Examples included**: status codes, categories, flags, enum values (< 20% cardinality ratio)
+
+3. **FK Discovery Integration**: Automatically runs after context generation to create FK validation questions
+   - Manual trigger via "Discover Relationships" button on SME Interview page
+   - Auto-triggered after "Generate Context & Questions" workflow completes
+
 # External Dependencies
 
 ## Database Services
