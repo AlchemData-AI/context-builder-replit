@@ -43,6 +43,8 @@ export interface IStorage {
   // Foreign key methods
   createForeignKey(foreignKey: Omit<ForeignKey, 'id' | 'createdAt'>): Promise<ForeignKey>;
   getForeignKeysByTableId(tableId: string): Promise<ForeignKey[]>;
+  updateForeignKeyValidation(foreignKeyId: string, isValidated: boolean): Promise<void>;
+  deleteForeignKey(foreignKeyId: string): Promise<void>;
 
   // Agent persona methods
   createAgentPersona(persona: InsertAgentPersona): Promise<AgentPersona>;
@@ -52,6 +54,7 @@ export interface IStorage {
   // SME question methods
   createSmeQuestion(question: InsertSmeQuestion): Promise<SmeQuestion>;
   getQuestionsByDatabaseId(databaseId: string): Promise<SmeQuestion[]>;
+  getSmeQuestionById(questionId: string): Promise<SmeQuestion | undefined>;
   answerSmeQuestion(questionId: string, response: string): Promise<void>;
 
   // Analysis job methods
@@ -240,6 +243,19 @@ export class DatabaseStorage implements IStorage {
       .where(eq(foreignKeys.fromTableId, tableId));
   }
 
+  async updateForeignKeyValidation(foreignKeyId: string, isValidated: boolean): Promise<void> {
+    await db
+      .update(foreignKeys)
+      .set({ isValidated })
+      .where(eq(foreignKeys.id, foreignKeyId));
+  }
+
+  async deleteForeignKey(foreignKeyId: string): Promise<void> {
+    await db
+      .delete(foreignKeys)
+      .where(eq(foreignKeys.id, foreignKeyId));
+  }
+
   async createAgentPersona(persona: InsertAgentPersona): Promise<AgentPersona> {
     const [result] = await db
       .insert(agentPersonas)
@@ -275,6 +291,7 @@ export class DatabaseStorage implements IStorage {
         id: smeQuestions.id,
         tableId: smeQuestions.tableId,
         columnId: smeQuestions.columnId,
+        enumValueId: smeQuestions.enumValueId,
         questionType: smeQuestions.questionType,
         questionText: smeQuestions.questionText,
         options: smeQuestions.options,
@@ -286,6 +303,14 @@ export class DatabaseStorage implements IStorage {
       .from(smeQuestions)
       .innerJoin(tables, eq(smeQuestions.tableId, tables.id))
       .where(eq(tables.databaseId, databaseId));
+  }
+
+  async getSmeQuestionById(questionId: string): Promise<SmeQuestion | undefined> {
+    const [question] = await db
+      .select()
+      .from(smeQuestions)
+      .where(eq(smeQuestions.id, questionId));
+    return question || undefined;
   }
 
   async answerSmeQuestion(questionId: string, response: string): Promise<void> {

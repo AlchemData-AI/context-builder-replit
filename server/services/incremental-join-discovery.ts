@@ -402,7 +402,7 @@ export class IncrementalJoinDiscoveryService {
   }
   
   /**
-   * Process FK candidates: persist high-confidence, generate SME questions for medium-confidence
+   * Process FK candidates: create unvalidated FK records and SME questions for user validation
    */
   private async processFkCandidates(
     candidates: ForeignKeyConstraint[],
@@ -426,21 +426,21 @@ export class IncrementalJoinDiscoveryService {
           continue;
         }
         
-        // High confidence (≥0.8): Auto-persist
-        if (candidate.confidence >= 0.8) {
-          await storage.createForeignKey({
+        // Only process candidates with confidence >= 0.6
+        if (candidate.confidence >= 0.6) {
+          // Step 1: Create unvalidated FK record (for reference)
+          const createdFk = await storage.createForeignKey({
             fromTableId: candidate.fromTableId,
             fromColumnId: candidate.fromColumnId,
             toTableId: candidate.toTableId,
             toColumnId: candidate.toColumnId,
             confidence: candidate.confidence.toString(),
-            isValidated: candidate.source === 'pg_catalog' // Catalog FKs are pre-validated
+            isValidated: false // Always false - requires user validation
           });
           persistedCount++;
-          console.log(`✓ Persisted high-confidence FK: ${candidate.fromTableName}.${candidate.fromColumnName} → ${candidate.toTableName}.${candidate.toColumnName} (${candidate.confidence})`);
-        }
-        // Medium confidence (0.6-0.8): Generate SME question
-        else if (candidate.confidence >= 0.6) {
+          
+          // Step 2: Create SME question for user validation
+          const priority = candidate.confidence >= 0.8 ? 'high' : 'medium';
           await storage.createSmeQuestion({
             tableId: candidate.fromTableId,
             columnId: candidate.fromColumnId,
@@ -452,12 +452,13 @@ export class IncrementalJoinDiscoveryService {
               toTableId: candidate.toTableId,
               toColumnId: candidate.toColumnId,
               confidence: candidate.confidence,
-              source: candidate.source
+              source: candidate.source,
+              foreignKeyId: createdFk.id
             },
-            priority: 'medium'
+            priority
           });
           smeQuestionsCount++;
-          console.log(`❓ Created SME question for medium-confidence FK: ${candidate.fromTableName}.${candidate.fromColumnName} → ${candidate.toTableName}.${candidate.toColumnName} (${candidate.confidence})`);
+          console.log(`❓ Created FK candidate and SME question: ${candidate.fromTableName}.${candidate.fromColumnName} → ${candidate.toTableName}.${candidate.toColumnName} (confidence: ${candidate.confidence})`);
         }
         // Low confidence (<0.6): Skip
         else {

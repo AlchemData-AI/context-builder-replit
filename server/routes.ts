@@ -627,7 +627,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Response is required" });
       }
       
+      // Get the question to check if it's a relationship question
+      const question = await storage.getSmeQuestionById(id);
+      if (!question) {
+        return res.status(404).json({ error: "Question not found" });
+      }
+      
+      // Save the answer
       await storage.answerSmeQuestion(id, response);
+      
+      // If this is a relationship question about a foreign key, handle validation
+      if (question.questionType === 'relationship' && question.options) {
+        const options = typeof question.options === 'string' 
+          ? JSON.parse(question.options) 
+          : question.options;
+        
+        const foreignKeyId = options.foreignKeyId;
+        const normalizedResponse = response.toLowerCase().trim();
+        
+        if (foreignKeyId) {
+          // User confirmed the FK relationship
+          if (['yes', 'y', 'true', 'confirmed', 'correct'].includes(normalizedResponse)) {
+            await storage.updateForeignKeyValidation(foreignKeyId, true);
+            console.log(`✅ FK ${foreignKeyId} marked as validated (user confirmed)`);
+          }
+          // User rejected the FK relationship
+          else if (['no', 'n', 'false', 'incorrect', 'wrong'].includes(normalizedResponse)) {
+            await storage.deleteForeignKey(foreignKeyId);
+            console.log(`❌ FK ${foreignKeyId} deleted (user rejected)`);
+          }
+        }
+      }
+      
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to save answer" });
@@ -1787,7 +1818,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let fksCreated = 0;
     for (const table of tables) {
       const foreignKeys = await storage.getForeignKeysByTableId(table.id);
-      for (const fk of foreignKeys) {
+      // Only sync validated FKs to the graph (user must confirm via SME questions first)
+      const validatedFks = foreignKeys.filter(fk => fk.isValidated === true);
+      console.log(`📊 [SYNC] Table ${table.name}: ${validatedFks.length}/${foreignKeys.length} FKs validated`);
+      
+      for (const fk of validatedFks) {
         // In shared mode, construct columnKeys for cross-persona FK relationships
         let fromKey: string | undefined;
         let toKey: string | undefined;
@@ -2191,7 +2226,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const allTables = await storage.getSelectedTables(databaseId);
     for (const table of allTables) {
       const foreignKeys = await storage.getForeignKeysByTableId(table.id);
-      for (const fk of foreignKeys) {
+      // Only sync validated FKs to the graph (user must confirm via SME questions first)
+      const validatedFks = foreignKeys.filter(fk => fk.isValidated === true);
+      
+      for (const fk of validatedFks) {
         // In shared mode, construct columnKeys for cross-persona FK relationships
         let fromKey: string | undefined;
         let toKey: string | undefined;

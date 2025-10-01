@@ -64,31 +64,28 @@ Session-based authentication with Express sessions and PostgreSQL storage, suppo
 - ✅ Successfully tested with clinical trials database (discovered 34 relationships)
 - ✅ Cross-persona FK relationships using canonical keys
 
-### Architect Review Findings  
-**Critical Issue Identified**: Current heuristic incorrectly promotes descriptive columns as FKs.
+### Architect Review Findings - RESOLVED
+**Critical Issue**: Heuristic incorrectly promoted descriptive columns as FKs with auto-persist behavior.
 
-**Problem**: Heuristic 1 (exact name + type match = 0.85 confidence) creates false positives. Example:
-- `baseline_measurements.title` → `outcome_measurements.title` is NOT a foreign key
-- `baseline_measurements.description` → `outcome_measurements.description` is NOT a foreign key
-- These are shared descriptive attributes, not relational keys
+**Fix Applied**: Removed auto-persist for all discovered FKs. All relationships now require human validation via SME workflow.
 
-**Root Cause**: Missing value-level validation. Real FKs require:
-1. **Target uniqueness**: Target column should be >95% distinct (near-unique)
+**Implementation** (October 1, 2025):
+- ✅ Modified IncrementalJoinDiscoveryService to create SME questions for ALL discovered FKs (no auto-persist)
+- ✅ Implemented storage methods: `updateForeignKeyValidation()`, `deleteForeignKey()`, `getSmeQuestionById()`
+- ✅ API route `/api/sme-questions/:id/answer` handles FK validation/deletion based on user responses
+- ✅ Graph building syncs only validated FKs to Neo4j
+- ✅ False positive FKs (title, description) now require user approval before inclusion
+
+**Status**: Critical issue resolved. All FKs go through human-in-the-loop validation.
+
+### Future Enhancement (Optional)
+Add value-level validation to reduce SME questions by pre-filtering obvious non-FKs:
+1. **Target uniqueness check**: Target column >95% distinct
 2. **Referential coverage**: >95% of source values exist in target
-3. **Cardinality**: Many-to-one relationship pattern
-4. **Column patterns**: Prioritize _id suffixes, numeric types, indexed/PK columns
+3. **Cardinality analysis**: Many-to-one relationship pattern
+4. **Column naming patterns**: Prioritize _id suffixes, numeric types
 
-### Required Next Actions
-1. **Add FK Validation Function**: Create `validateForeignKeyRelationship()` that:
-   - Queries actual data to check target distinctness
-   - Measures referential coverage (value overlap)
-   - Validates cardinality patterns
-   - Checks column naming (is it ID-like?)
-2. **Update Heuristic 1**: Call validation before assigning 0.85 confidence
-   - Descriptive columns (title, description, etc.) → downgrade to 0.65 (SME review)
-   - ID-like columns with high validation scores → keep 0.85 (auto-persist)
-3. **Add Test Assertions**: Verify descriptive columns are NOT auto-promoted
-4. **Fix Graph Idempotency**: Ensure MERGE for all relationships (prevent duplicates)
+This would auto-reject descriptive columns (title, description) before creating SME questions, improving user experience.
 
 ### Test Data
 - Database: ctgov (Clinical Trials)
