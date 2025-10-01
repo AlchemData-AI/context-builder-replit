@@ -109,6 +109,12 @@ export class SMEInterviewService {
           continue;
         }
 
+        // Skip high-cardinality columns (cardinality ratio >= 20%)
+        // These are typically IDs or near-unique columns that don't need SME validation
+        if (this.isHighCardinalityColumn(column, table)) {
+          continue;
+        }
+
         // Store column hypothesis as AI description
         await storage.updateColumnStats(column.id, {
           aiDescription: columnData.hypothesis
@@ -369,6 +375,20 @@ export class SMEInterviewService {
     }
     
     return false;
+  }
+
+  private isHighCardinalityColumn(column: Column, table: Table): boolean {
+    // If cardinality or row count is not available, don't filter
+    if (!column.cardinality || !table.rowCount) {
+      return false;
+    }
+
+    // Calculate cardinality ratio (distinct values / total rows)
+    const cardinalityRatio = column.cardinality / table.rowCount;
+
+    // Filter out columns with >= 20% cardinality ratio
+    // These are typically IDs, order IDs, date partitions, or other near-unique columns
+    return cardinalityRatio >= 0.2;
   }
 
   private determinePriority(
