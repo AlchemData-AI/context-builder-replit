@@ -10,6 +10,7 @@ import { statisticalAnalyzer } from "./services/statistical-analyzer";
 import { semanticAnalyzer } from "./services/semantic-analyzer";
 import { smeInterviewService } from "./services/sme-interview";
 import { neo4jBackfillService } from "./services/neo4j-backfill";
+import { neo4jDeduplicationService } from "./services/neo4j-deduplication";
 import { EnvironmentService } from "./services/environment-service";
 import { insertConnectionSchema, insertDatabaseSchema, insertTableSchema, insertAgentPersonaSchema } from "@shared/schema";
 import { z } from "zod";
@@ -2707,6 +2708,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(stats);
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to get backfill stats" });
+    }
+  });
+
+  // Deduplicate nodes by merging duplicates with same canonical keys
+  app.post("/api/neo4j/deduplicate-nodes", async (req, res) => {
+    try {
+      console.log('🔄 Starting node deduplication...');
+      const result = await neo4jDeduplicationService.deduplicateNodes();
+      
+      if (result.success) {
+        console.log(`✅ Deduplication completed: ${result.tablesMerged} tables, ${result.columnsMerged} columns merged`);
+        res.json(result);
+      } else {
+        console.error('❌ Deduplication failed:', result.errors);
+        res.status(500).json(result);
+      }
+    } catch (error) {
+      console.error('❌ Deduplication endpoint error:', error);
+      res.status(500).json({ 
+        success: false,
+        tablesMerged: 0,
+        columnsMerged: 0,
+        valuesMerged: 0,
+        errors: [error instanceof Error ? error.message : String(error)],
+        details: []
+      });
+    }
+  });
+
+  // Get statistics on duplicate nodes
+  app.get("/api/neo4j/deduplication-stats", async (req, res) => {
+    try {
+      const stats = await neo4jDeduplicationService.getDeduplicationStatistics();
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to get deduplication stats" });
     }
   });
 
