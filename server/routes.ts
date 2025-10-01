@@ -947,28 +947,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       throw new Error(`Table '${table.name}' sampling failed: ${dataError instanceof Error ? dataError.message : 'Unknown database error'}`);
     }
     
-    // FILTER COLUMNS BEFORE SENDING TO GEMINI (to save tokens)
-    const filteredColumns = columns.filter(c => {
-      // Skip timestamp/date columns
-      const isTimestamp = smeInterviewService.isTimestampColumn(c);
-      if (isTimestamp) {
-        console.log(`[Job ${jobId}] 🚫 Filtering out timestamp column BEFORE Gemini: ${table.name}.${c.name} (${c.dataType})`);
-        return false;
-      }
-
-      // Skip high-cardinality columns (>= 20% ratio)
-      const isHighCardinality = smeInterviewService.isHighCardinalityColumn(c, table);
-      if (isHighCardinality) {
-        console.log(`[Job ${jobId}] 🚫 Filtering out high-cardinality column BEFORE Gemini: ${table.name}.${c.name} (ratio: ${c.cardinality && table.rowCount ? ((c.cardinality / table.rowCount) * 100).toFixed(2) : 'N/A'}%)`);
-        return false;
-      }
-
-      return true;
-    });
-
-    console.log(`[Job ${jobId}] Filtered columns: ${columns.length} → ${filteredColumns.length} (removed ${columns.length - filteredColumns.length} timestamp/high-cardinality columns)`);
-
-    // Generate schema string (use ALL columns for schema, not just filtered)
+    // Generate schema string
     const schema = `CREATE TABLE ${table.schema}.${table.name} (\n${columns.map(c => `  ${c.name} ${c.dataType}`).join(',\n')}\n);`;
     
     // Helper function to safely parse JSON arrays
@@ -987,8 +966,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return [];
     };
     
-    // Prepare column data ONLY for filtered columns (saves Gemini tokens)
-    const columnData = filteredColumns.map(c => {
+    // Prepare column data for ALL columns (Gemini needs full context)
+    const columnData = columns.map(c => {
       const distinctValues = safeParseArray(c.distinctValues);
       return {
         name: c.name,
