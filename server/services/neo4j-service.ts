@@ -22,6 +22,8 @@ export interface TableNode {
   description?: string;
   rowCount?: number;
   columnCount?: number;
+  databaseId?: string; // For canonical key generation
+  canonicalKey?: string; // ${databaseId}.${schema}.${name}
 }
 
 export interface ColumnNode {
@@ -32,6 +34,10 @@ export interface ColumnNode {
   isNullable: boolean;
   cardinality?: number;
   nullPercentage?: number;
+  databaseId?: string; // For canonical key generation
+  tableSchema?: string; // For canonical key generation
+  tableName?: string; // For canonical key generation
+  columnKey?: string; // ${databaseId}.${schema}.${table}.${column}
 }
 
 export interface ValueNode {
@@ -183,6 +189,11 @@ export class Neo4jService {
   async createTableNode(personaId: string, table: TableNode): Promise<void> {
     const session = this.getSession();
     try {
+      // Generate canonical key if we have the required data
+      const canonicalKey = table.databaseId && table.schema && table.name
+        ? `${table.databaseId}.${table.schema}.${table.name}`
+        : (table.canonicalKey || null);
+
       await session.run(`
         MATCH (p:AgentPersona {id: $personaId})
         MERGE (t:Table {id: $tableId})
@@ -191,6 +202,7 @@ export class Neo4jService {
             t.description = $description,
             t.rowCount = $rowCount,
             t.columnCount = $columnCount,
+            t.canonicalKey = $canonicalKey,
             t.createdAt = datetime()
         MERGE (p)-[:CONTAINS]->(t)
       `, {
@@ -200,7 +212,8 @@ export class Neo4jService {
         schema: table.schema,
         description: table.description || '',
         rowCount: table.rowCount ?? 0,
-        columnCount: table.columnCount ?? 0
+        columnCount: table.columnCount ?? 0,
+        canonicalKey
       });
     } finally {
       await session.close();
@@ -210,6 +223,11 @@ export class Neo4jService {
   async createColumnNode(tableId: string, column: ColumnNode): Promise<void> {
     const session = this.getSession();
     try {
+      // Generate column canonical key if we have the required data
+      const columnKey = column.databaseId && column.tableSchema && column.tableName && column.name
+        ? `${column.databaseId}.${column.tableSchema}.${column.tableName}.${column.name}`
+        : (column.columnKey || null);
+
       await session.run(`
         MATCH (t:Table {id: $tableId})
         MERGE (c:Column {id: $columnId})
@@ -219,6 +237,7 @@ export class Neo4jService {
             c.isNullable = $isNullable,
             c.cardinality = $cardinality,
             c.nullPercentage = $nullPercentage,
+            c.columnKey = $columnKey,
             c.createdAt = datetime()
         MERGE (t)-[:HAS_COLUMN]->(c)
       `, {
@@ -229,7 +248,8 @@ export class Neo4jService {
         description: column.description || '',
         isNullable: column.isNullable ?? false,
         cardinality: column.cardinality ?? 0,
-        nullPercentage: column.nullPercentage ?? 0
+        nullPercentage: column.nullPercentage ?? 0,
+        columnKey
       });
     } finally {
       await session.close();

@@ -1583,7 +1583,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           schema: table.schema,
           description: `Table containing ${table.columnCount || 0} columns with data analysis context`,
           rowCount: table.rowCount ?? undefined,
-          columnCount: table.columnCount ?? undefined
+          columnCount: table.columnCount ?? undefined,
+          databaseId: table.databaseId
         });
         tablesLinked++;
       }
@@ -1606,7 +1607,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           description: column.aiDescription || `Column ${column.name} in table ${table.name}`,
           isNullable: column.isNullable || false,
           cardinality: typeof column.cardinality === 'number' ? column.cardinality : (parseInt(String(column.cardinality)) || 0),
-          nullPercentage: typeof column.nullPercentage === 'number' ? column.nullPercentage : (parseFloat(String(column.nullPercentage)) || 0)
+          nullPercentage: typeof column.nullPercentage === 'number' ? column.nullPercentage : (parseFloat(String(column.nullPercentage)) || 0),
+          databaseId: table.databaseId,
+          tableSchema: table.schema,
+          tableName: table.name
         });
         columnsCreated++;
         
@@ -1815,7 +1819,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           schema: table.schema,
           description: `Table containing ${table.columnCount || 0} columns with data analysis context`,
           rowCount: table.rowCount ?? undefined,
-          columnCount: table.columnCount ?? undefined
+          columnCount: table.columnCount ?? undefined,
+          databaseId: table.databaseId
         });
         
         // Get and create Column nodes with SME context
@@ -1842,7 +1847,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             description: enhancedDescription ?? undefined,
             isNullable: column.isNullable ?? false,
             cardinality: column.cardinality ?? undefined,
-            nullPercentage: parseFloat(column.nullPercentage || '0')
+            nullPercentage: parseFloat(column.nullPercentage || '0'),
+            databaseId: table.databaseId,
+            tableSchema: table.schema,
+            tableName: table.name
           });
           
           // Create Value nodes for low-cardinality columns with AI context from enum values
@@ -2279,7 +2287,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               schema: table.schema,
               description: `Table containing ${table.columnCount || 0} columns with data analysis context`,
               rowCount: table.rowCount ?? undefined,
-              columnCount: table.columnCount ?? undefined
+              columnCount: table.columnCount ?? undefined,
+              databaseId: table.databaseId
             });
             
             // Get and create Column nodes
@@ -2293,7 +2302,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 description: column.aiDescription ?? undefined,
                 isNullable: column.isNullable ?? false,
                 cardinality: column.cardinality ?? undefined,
-                nullPercentage: parseFloat(column.nullPercentage || '0')
+                nullPercentage: parseFloat(column.nullPercentage || '0'),
+                databaseId: table.databaseId,
+                tableSchema: table.schema,
+                tableName: table.name
               });
               
               // Create Value nodes for low-cardinality columns with AI context from enum values
