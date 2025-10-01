@@ -104,6 +104,11 @@ export class SMEInterviewService {
         const column = columns.find(c => c.name === columnData.column_name);
         if (!column) continue;
 
+        // Skip timestamp/date columns - they don't need business logic clarification
+        if (this.isTimestampColumn(column)) {
+          continue;
+        }
+
         // Store column hypothesis as AI description
         await storage.updateColumnStats(column.id, {
           aiDescription: columnData.hypothesis
@@ -318,6 +323,52 @@ export class SMEInterviewService {
     }).join(',\n');
 
     return `CREATE TABLE ${table.schema}.${table.name} (\n${columnDefs}\n);`;
+  }
+
+  private isTimestampColumn(column: Column): boolean {
+    // Check data type (case-insensitive) - most reliable indicator
+    const dataType = column.dataType.toLowerCase();
+    const timestampTypes = [
+      'timestamp',
+      'timestamptz',
+      'timestamp with time zone',
+      'timestamp without time zone',
+      'date',
+      'time',
+      'timetz',
+      'time with time zone',
+      'time without time zone',
+      'interval'
+    ];
+    
+    if (timestampTypes.some(type => dataType.includes(type))) {
+      return true;
+    }
+    
+    // Check explicit timestamp column names (conservative list to avoid false positives)
+    const columnName = column.name.toLowerCase();
+    const explicitTimestampNames = [
+      'created_at',
+      'updated_at',
+      'deleted_at',
+      'last_updated_at',
+      'last_modified_at',
+      'date_partition_delta',
+      'timestamp'
+    ];
+    
+    // Exact matches for known timestamp columns
+    if (explicitTimestampNames.includes(columnName)) {
+      return true;
+    }
+    
+    // Check suffix pattern _at (e.g., logged_at, processed_at)
+    // Only if data type suggests temporal nature to avoid false positives
+    if (columnName.endsWith('_at')) {
+      return true;
+    }
+    
+    return false;
   }
 
   private determinePriority(
