@@ -1782,12 +1782,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     
     
+    // Sync traditional foreign key relationships from PostgreSQL storage
+    console.log('🔗 [SYNC] Syncing foreign key relationships from PostgreSQL...');
+    let fksCreated = 0;
+    for (const table of tables) {
+      const foreignKeys = await storage.getForeignKeysByTableId(table.id);
+      for (const fk of foreignKeys) {
+        // In shared mode, construct columnKeys for cross-persona FK relationships
+        let fromKey: string | undefined;
+        let toKey: string | undefined;
+        
+        if (neo4jService.isSharedNodesEnabled()) {
+          try {
+            // Get column details to construct canonical keys
+            const fromColumn = fk.fromColumnId ? await storage.getColumnById(fk.fromColumnId) : null;
+            const toColumn = fk.toColumnId ? await storage.getColumnById(fk.toColumnId) : null;
+            
+            if (fromColumn && toColumn) {
+              // Get table details for schema information
+              const fromTable = await storage.getTable(fromColumn.tableId);
+              const toTable = await storage.getTable(toColumn.tableId);
+              
+              // Validate all required fields are present before constructing keys
+              if (fromTable && toTable && 
+                  fromTable.schema && fromTable.name && fromColumn.name &&
+                  toTable.schema && toTable.name && toColumn.name) {
+                fromKey = `${databaseId}.${fromTable.schema}.${fromTable.name}.${fromColumn.name}`;
+                toKey = `${databaseId}.${toTable.schema}.${toTable.name}.${toColumn.name}`;
+                console.log(`🔗 [SYNC] Creating shared FK relationship: ${fromKey} -> ${toKey}`);
+              } else {
+                console.warn(`⚠️  [SYNC] Incomplete metadata for FK, falling back to IDs`);
+              }
+            }
+          } catch (error) {
+            console.warn(`⚠️  [SYNC] Failed to construct canonical keys for FK, falling back to IDs:`, error instanceof Error ? error.message : error);
+          }
+        }
+        
+        await neo4jService.createRelationship({
+          fromId: fk.fromColumnId || '',
+          toId: fk.toColumnId || '',
+          fromKey,
+          toKey,
+          type: 'FOREIGN_KEY',
+          properties: {
+            confidence: parseFloat(fk.confidence || '0.5'),
+            isValidated: fk.isValidated || false
+          }
+        });
+        fksCreated++;
+      }
+    }
+    console.log(`✅ [SYNC] Created ${fksCreated} foreign key relationships`);
+    
     // Get fresh statistics after updates (don't manually modify counts)
     const updatedStats = await neo4jService.getNamespaceStatistics(namespace);
     
     console.log('Incremental knowledge graph update completed:', {
       ...updatedStats,
-      relationshipsProcessed: relationshipsProcessed
+      relationshipsProcessed: relationshipsProcessed,
+      foreignKeysCreated: fksCreated
     });
     
     return updatedStats;
