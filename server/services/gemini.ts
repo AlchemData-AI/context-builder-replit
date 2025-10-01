@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { neo4jService } from "./neo4j-service";
 
 const ai = new GoogleGenAI({ 
   apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "" 
@@ -58,6 +59,184 @@ export class GeminiService {
     if (text.length <= maxChars) return text;
     
     return text.substring(0, maxChars) + "...[truncated]";
+  }
+
+  /**
+   * Generate or reuse table description with context awareness
+   * Checks Neo4j for existing context before calling LLM (cost savings)
+   */
+  async generateOrReuseTableDescription(
+    tableName: string,
+    schema: string,
+    sampleData: any[],
+    databaseId: string, // Changed to string for canonical key consistency
+    tableSchema: string,
+    forceRegenerate: boolean = false
+  ): Promise<TableDescription & { wasReused: boolean }> {
+    // Check for existing context (only works in shared mode)
+    if (!forceRegenerate && neo4jService.isSharedNodesEnabled()) {
+      try {
+        const canonicalKey = `${databaseId}.${tableSchema}.${tableName}`;
+        const existingNode = await neo4jService.findTableByCanonicalKey(canonicalKey);
+        
+        if (existingNode && existingNode.description && existingNode.description.length > 0) {
+          console.log(`✨ Context reuse: Found existing description for table ${tableName} (saved LLM call)`);
+          
+          // Parse existing description into expected format
+          // The description field might contain the full structured data or just the description
+          try {
+            const parsed = JSON.parse(existingNode.description);
+            return {
+              ...parsed,
+              wasReused: true
+            };
+          } catch {
+            // If not JSON, treat as simple description
+            return {
+              table_name: tableName,
+              description: existingNode.description,
+              business_purpose: '',
+              data_characteristics: '',
+              wasReused: true
+            };
+          }
+        }
+      } catch (error) {
+        // Gracefully degrade if Neo4j is unavailable - don't fail the entire job
+        console.warn(`⚠️  Neo4j lookup failed for table ${tableName}, falling back to fresh LLM generation:`, error instanceof Error ? error.message : error);
+      }
+    }
+    
+    // No existing context or forced regeneration - call LLM
+    const freshDescription = await this.generateTableDescription(tableName, schema, sampleData);
+    
+    // Persist fresh description back to Neo4j (last-wins update)
+    if (neo4jService.isSharedNodesEnabled()) {
+      try {
+        const canonicalKey = `${databaseId}.${tableSchema}.${tableName}`;
+        // Store as JSON string for structured data
+        const descriptionJson = JSON.stringify(freshDescription);
+        await neo4jService.updateTableDescription(canonicalKey, descriptionJson);
+        console.log(`💾 Persisted fresh table description for ${tableName} to shared knowledge graph`);
+      } catch (error) {
+        console.warn(`⚠️  Failed to persist table description for ${tableName}:`, error instanceof Error ? error.message : error);
+      }
+    }
+    
+    return {
+      ...freshDescription,
+      wasReused: false
+    };
+  }
+
+  /**
+   * Generate or reuse column descriptions with context awareness
+   * Checks Neo4j for existing context before calling LLM (cost savings)
+   */
+  async generateOrReuseColumnDescriptions(
+    tableName: string,
+    columns: Array<{
+      name: string;
+      dataType: string;
+      sampleValues: any[];
+      cardinality?: number;
+      nullPercentage?: number;
+      databaseId?: string; // Changed to string for canonical key consistency
+      tableSchema?: string;
+    }>,
+    forceRegenerate: boolean = false
+  ): Promise<Array<ColumnDescription & { wasReused: boolean }>> {
+    const results: Array<ColumnDescription & { wasReused: boolean }> = [];
+    
+    // Check for existing context for each column
+    if (!forceRegenerate && neo4jService.isSharedNodesEnabled()) {
+      try {
+        for (const col of columns) {
+          if (col.databaseId && col.tableSchema) {
+            const columnKey = `${col.databaseId}.${col.tableSchema}.${tableName}.${col.name}`;
+            try {
+              const existingNode = await neo4jService.findColumnByColumnKey(columnKey);
+              
+              if (existingNode && existingNode.description && existingNode.description.length > 0) {
+                console.log(`✨ Context reuse: Found existing description for column ${col.name} (saved LLM call)`);
+                
+                // Parse existing description
+                try {
+                  const parsed = JSON.parse(existingNode.description);
+                  results.push({
+                    ...parsed,
+                    wasReused: true
+                  });
+                } catch {
+                  results.push({
+                    column_name: col.name,
+                    description: existingNode.description,
+                    business_meaning: '',
+                    data_patterns: '',
+                    wasReused: true
+                  });
+                }
+                continue;
+              }
+            } catch (error) {
+              console.warn(`⚠️  Neo4j lookup failed for column ${col.name}, will generate fresh:`, error instanceof Error ? error.message : error);
+            }
+          }
+          
+          // No existing context for this column - mark for fresh generation
+          results.push({ 
+            column_name: col.name, 
+            description: '',
+            business_meaning: '',
+            data_patterns: '',
+            wasReused: false 
+          } as any);
+        }
+        
+        // If any columns need fresh generation, batch call the LLM for efficiency
+        const columnsNeedingGeneration = results
+          .map((r, i) => ({ result: r, index: i, column: columns[i] }))
+          .filter(item => !item.result.wasReused && !item.result.description);
+        
+        if (columnsNeedingGeneration.length > 0) {
+          const freshDescriptions = await this.generateColumnDescriptions(
+            tableName,
+            columnsNeedingGeneration.map(item => item.column)
+          );
+          
+          // Merge fresh descriptions back into results and persist to Neo4j (last-wins)
+          columnsNeedingGeneration.forEach((item, freshIndex) => {
+            const freshDesc = freshDescriptions[freshIndex];
+            results[item.index] = {
+              ...freshDesc,
+              wasReused: false
+            };
+            
+            // Persist fresh description back to Neo4j
+            const col = item.column;
+            if (col.databaseId && col.tableSchema) {
+              const columnKey = `${col.databaseId}.${col.tableSchema}.${tableName}.${col.name}`;
+              const descriptionJson = JSON.stringify(freshDesc);
+              neo4jService.updateColumnDescription('', descriptionJson, columnKey)
+                .then(() => console.log(`💾 Persisted fresh column description for ${col.name} to shared knowledge graph`))
+                .catch(error => console.warn(`⚠️  Failed to persist column description for ${col.name}:`, error instanceof Error ? error.message : error));
+            }
+          });
+        }
+        
+        return results;
+      } catch (error) {
+        // Gracefully degrade if Neo4j is unavailable
+        console.warn(`⚠️  Neo4j context reuse failed, falling back to fresh LLM generation for all columns:`, error instanceof Error ? error.message : error);
+      }
+    }
+    
+    // Not in shared mode or forced regeneration - call LLM for all
+    const freshDescriptions = await this.generateColumnDescriptions(tableName, columns);
+    return freshDescriptions.map(desc => ({
+      ...desc,
+      wasReused: false
+    }));
   }
 
   async generateTableDescription(

@@ -501,20 +501,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const sampleData = await schemaAnalyzer.getSampleData(table.id);
           const columns = await storage.getColumnsByTableId(table.id);
           
-          // Generate table description
+          // Generate or reuse table description (checks Neo4j first to save LLM calls)
           const schema = `CREATE TABLE ${table.schema}.${table.name} (\n${columns.map(c => `  ${c.name} ${c.dataType}`).join(',\n')}\n);`;
-          const tableDesc = await geminiService.generateTableDescription(table.name, schema, sampleData);
+          const tableDesc = await geminiService.generateOrReuseTableDescription(
+            table.name, 
+            schema, 
+            sampleData,
+            id, // Keep as string for canonical key consistency
+            table.schema,
+            req.query.forceRegenerate === 'true' // Support force regeneration via query param
+          );
           
-          // Generate column descriptions
+          // Generate or reuse column descriptions (checks Neo4j first to save LLM calls)
           const columnData = columns.map(c => ({
             name: c.name,
             dataType: c.dataType,
             sampleValues: sampleData.map(row => row[c.name]).filter(v => v != null).slice(0, 10),
             cardinality: c.cardinality ?? undefined,
-            nullPercentage: parseFloat(c.nullPercentage || '0')
+            nullPercentage: parseFloat(c.nullPercentage || '0'),
+            databaseId: id, // Keep as string for canonical key consistency
+            tableSchema: table.schema
           }));
           
-          const columnDescs = await geminiService.generateColumnDescriptions(table.name, columnData);
+          const columnDescs = await geminiService.generateOrReuseColumnDescriptions(
+            table.name, 
+            columnData,
+            req.query.forceRegenerate === 'true' // Support force regeneration via query param
+          );
+          
+          // Log context reuse statistics
+          const tableReused = tableDesc.wasReused ? 1 : 0;
+          const columnsReused = columnDescs.filter(c => c.wasReused).length;
+          if (tableReused > 0 || columnsReused > 0) {
+            console.log(`💰 Cost savings for ${table.name}: ${tableReused} table + ${columnsReused}/${columnDescs.length} columns reused (${tableReused + columnsReused} LLM calls saved)`);
+          }
           
           results.push({
             table: tableDesc,

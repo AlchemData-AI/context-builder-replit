@@ -640,6 +640,28 @@ export class Neo4jService {
     }
   }
 
+  async updateTableDescription(tableKey: string, description: string): Promise<void> {
+    const session = this.getSession();
+    try {
+      // In shared mode, tableKey is the canonicalKey; otherwise it's the id
+      const cypher = this.useCanonicalKeys
+        ? `
+          MATCH (t:Table {canonicalKey: $key})
+          SET t.description = $description,
+              t.updatedAt = datetime()
+        `
+        : `
+          MATCH (t:Table {id: $key})
+          SET t.description = $description,
+              t.updatedAt = datetime()
+        `;
+
+      await session.run(cypher, { key: tableKey, description });
+    } finally {
+      await session.close();
+    }
+  }
+
   async updateColumnDescription(columnId: string, description: string, columnKey?: string): Promise<void> {
     const session = this.getSession();
     try {
@@ -756,6 +778,98 @@ export class Neo4jService {
         columnCount: record.get('columnCount').toNumber(),
         valueCount: record.get('valueCount').toNumber(),
         relationshipCount: record.get('relationshipCount').toNumber()
+      };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
+   * Check if a table node with AI-generated context already exists
+   * Used for context reuse to avoid redundant LLM calls
+   */
+  async findTableByCanonicalKey(canonicalKey: string): Promise<{
+    id: string;
+    name: string;
+    schema: string;
+    description: string;
+    rowCount: number;
+    columnCount: number;
+  } | null> {
+    if (!this.useCanonicalKeys) {
+      return null; // Context reuse only works in shared mode
+    }
+
+    const session = this.getSession();
+    try {
+      const result = await session.run(`
+        MATCH (t:Table {canonicalKey: $canonicalKey})
+        RETURN t.id as id, 
+               t.name as name, 
+               t.schema as schema, 
+               t.description as description,
+               t.rowCount as rowCount,
+               t.columnCount as columnCount
+      `, { canonicalKey });
+
+      if (result.records.length === 0) {
+        return null;
+      }
+
+      const record = result.records[0];
+      return {
+        id: record.get('id'),
+        name: record.get('name'),
+        schema: record.get('schema'),
+        description: record.get('description') || '',
+        rowCount: record.get('rowCount')?.toNumber() || 0,
+        columnCount: record.get('columnCount')?.toNumber() || 0
+      };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
+   * Check if a column node with AI-generated context already exists
+   * Used for context reuse to avoid redundant LLM calls
+   */
+  async findColumnByColumnKey(columnKey: string): Promise<{
+    id: string;
+    name: string;
+    dataType: string;
+    description: string;
+    isNullable: boolean;
+    cardinality: number;
+  } | null> {
+    if (!this.useCanonicalKeys) {
+      return null; // Context reuse only works in shared mode
+    }
+
+    const session = this.getSession();
+    try {
+      const result = await session.run(`
+        MATCH (c:Column {columnKey: $columnKey})
+        RETURN c.id as id,
+               c.name as name,
+               c.dataType as dataType,
+               c.description as description,
+               c.isNullable as isNullable,
+               c.cardinality as cardinality
+      `, { columnKey });
+
+      if (result.records.length === 0) {
+        return null;
+      }
+
+      const record = result.records[0];
+      return {
+        id: record.get('id'),
+        name: record.get('name'),
+        dataType: record.get('dataType'),
+        description: record.get('description') || '',
+        isNullable: record.get('isNullable') || false,
+        cardinality: record.get('cardinality')?.toNumber() || 0
       };
     } finally {
       await session.close();
