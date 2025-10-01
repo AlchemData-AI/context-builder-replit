@@ -1968,9 +1968,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     for (const table of allTables) {
       const foreignKeys = await storage.getForeignKeysByTableId(table.id);
       for (const fk of foreignKeys) {
+        // In shared mode, construct columnKeys for cross-persona FK relationships
+        let fromKey: string | undefined;
+        let toKey: string | undefined;
+        
+        if (neo4jService.isSharedNodesEnabled()) {
+          try {
+            // Get column details to construct canonical keys
+            const fromColumn = fk.fromColumnId ? await storage.getColumn(fk.fromColumnId) : null;
+            const toColumn = fk.toColumnId ? await storage.getColumn(fk.toColumnId) : null;
+            
+            if (fromColumn && toColumn) {
+              // Get table details for schema information
+              const fromTable = await storage.getTable(fromColumn.tableId);
+              const toTable = await storage.getTable(toColumn.tableId);
+              
+              // Validate all required fields are present before constructing keys
+              if (fromTable && toTable && 
+                  fromTable.schema && fromTable.name && fromColumn.name &&
+                  toTable.schema && toTable.name && toColumn.name) {
+                fromKey = `${databaseId}.${fromTable.schema}.${fromTable.name}.${fromColumn.name}`;
+                toKey = `${databaseId}.${toTable.schema}.${toTable.name}.${toColumn.name}`;
+                console.log(`🔗 Creating shared FK relationship: ${fromKey} -> ${toKey}`);
+              } else {
+                console.warn(`⚠️  Incomplete metadata for FK, falling back to IDs (from: ${fromTable?.name}.${fromColumn.name}, to: ${toTable?.name}.${toColumn.name})`);
+              }
+            }
+          } catch (error) {
+            console.warn(`⚠️  Failed to construct canonical keys for FK, falling back to IDs:`, error instanceof Error ? error.message : error);
+          }
+        }
+        
         await neo4jService.createRelationship({
           fromId: fk.fromColumnId || '',
           toId: fk.toColumnId || '',
+          fromKey,
+          toKey,
           type: 'FOREIGN_KEY',
           properties: {
             confidence: parseFloat(fk.confidence || '0.5'),
