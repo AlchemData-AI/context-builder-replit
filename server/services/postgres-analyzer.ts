@@ -36,10 +36,12 @@ export interface ForeignKeyInfo {
 
 export class PostgresAnalyzer {
   private pool: Pool | null = null;
+  private isDisconnecting: boolean = false;
 
   async connect(config: PostgresConfig): Promise<boolean> {
     try {
       this.pool = new Pool(config);
+      this.isDisconnecting = false;
       
       // Test connection
       const client = await this.pool.connect();
@@ -54,9 +56,22 @@ export class PostgresAnalyzer {
   }
 
   async disconnect(): Promise<void> {
-    if (this.pool) {
+    // Guard against multiple concurrent disconnect calls
+    if (!this.pool || this.isDisconnecting) {
+      return;
+    }
+    
+    this.isDisconnecting = true;
+    try {
       await this.pool.end();
+    } catch (error) {
+      // Ignore errors about pool already ended
+      if (error instanceof Error && !error.message.includes('end on pool')) {
+        throw error;
+      }
+    } finally {
       this.pool = null;
+      this.isDisconnecting = false;
     }
   }
 
