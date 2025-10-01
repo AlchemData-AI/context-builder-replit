@@ -2759,6 +2759,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
 
+  // Clear Neo4j namespace
+  app.post("/api/databases/:id/clear-neo4j", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const neo4jConnectionId = environmentService.getNeo4jConnectionId();
+      const neo4jConnection = await storage.getConnection(neo4jConnectionId);
+      
+      if (!neo4jConnection) {
+        return res.status(404).json({ error: "Neo4j connection not found" });
+      }
+      
+      const connected = await neo4jService.connect(neo4jConnection.config as any);
+      if (!connected) {
+        return res.status(500).json({ error: "Failed to connect to Neo4j" });
+      }
+      
+      try {
+        const namespace = `database_${id}`;
+        await neo4jService.clearNamespace(namespace);
+        
+        console.log(`✅ Cleared Neo4j namespace: ${namespace}`);
+        res.json({ success: true, namespace });
+      } finally {
+        await neo4jService.disconnect();
+      }
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to clear Neo4j" });
+    }
+  });
+
   // Add API 404 handler to prevent HTML confusion for API misses
   app.use('/api', (req, res) => {
     res.status(404).json({ 
