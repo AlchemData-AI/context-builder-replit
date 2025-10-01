@@ -1801,6 +1801,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     
+    let neo4jConnected = false;
+    
     try {
       console.log(`🔍 Starting cross-model discovery for persona: ${persona.name} (${persona.id})`);
       
@@ -1809,6 +1811,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn('⚠️  Persona has no databaseId, skipping cross-model discovery');
         return;
       }
+      
+      // Connect to Neo4j before querying
+      const neo4jConnectionId = environmentService.getNeo4jConnectionId();
+      const neo4jConnection = await storage.getConnection(neo4jConnectionId);
+      
+      if (!neo4jConnection) {
+        console.warn('⚠️  Neo4j connection not found, skipping cross-model discovery');
+        return;
+      }
+      
+      neo4jConnected = await neo4jService.connect(neo4jConnection.config as any);
+      if (!neo4jConnected) {
+        console.warn('⚠️  Failed to connect to Neo4j, skipping cross-model discovery');
+        return;
+      }
+      
+      console.log('✓ Connected to Neo4j for cross-model discovery');
       
       // Get all existing tables in Neo4j for this database (with persona details included)
       const existingTables = await neo4jService.findTablesByDatabaseId(databaseId);
@@ -1857,19 +1876,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // Create a relationship-type SME question about cross-model connections
         const question = {
-          databaseId,
-          personaId: persona.id,
+          tableId: overlap.table.id,
           questionType: 'relationship' as const,
           questionText: `The table "${overlap.table.name}" appears in multiple personas: "${persona.name}" and "${personaNames}". Are there specific relationships or dependencies between how this table is used across these different business contexts?`,
-          context: JSON.stringify({
-            tableId: overlap.table.id,
+          options: {
+            databaseId: databaseId,
+            personaId: persona.id,
             tableName: overlap.table.name,
             tableSchema: overlap.table.schema,
             canonicalKey: overlap.canonicalKey,
             newPersona: { id: persona.id, name: persona.name },
             existingPersonas: overlap.existingPersonas,
             discoveryType: 'cross-model-overlap'
-          })
+          }
         };
         
         await storage.createSmeQuestion(question);
@@ -1882,6 +1901,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       // Fail gracefully - don't break persona creation
       console.error('❌ Cross-model discovery failed (non-fatal):', error instanceof Error ? error.message : error);
+    } finally {
+      // Always disconnect from Neo4j
+      if (neo4jConnected) {
+        await neo4jService.disconnect();
+        console.log('✓ Disconnected from Neo4j after cross-model discovery');
+      }
     }
   }
 
