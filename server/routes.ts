@@ -1099,6 +1099,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     for (const column of enumColumns) {
       try {
+        // Apply filters: Skip timestamp/date columns
+        const isTimestamp = smeInterviewService.isTimestampColumn(column);
+        if (isTimestamp) {
+          console.log(`[Job ${jobId}] ⏭️  Skipping timestamp enum column: ${table.name}.${column.name} (${column.dataType})`);
+          continue;
+        }
+
+        // Apply filters: Skip high-cardinality columns (>= 20% ratio)
+        const isHighCardinality = smeInterviewService.isHighCardinalityColumn(column, table);
+        if (isHighCardinality) {
+          console.log(`[Job ${jobId}] ⏭️  Skipping high-cardinality enum column: ${table.name}.${column.name} (cardinality: ${column.cardinality}, rowCount: ${table.rowCount}, ratio: ${column.cardinality && table.rowCount ? ((column.cardinality / table.rowCount) * 100).toFixed(2) : 'N/A'}%)`);
+          continue;
+        }
+
         let distinctValues = safeParseArray(column.distinctValues);
         
         if (distinctValues.length === 0) {
