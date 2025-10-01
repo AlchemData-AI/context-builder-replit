@@ -966,7 +966,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return [];
     };
     
-    // Prepare column data for ALL columns (Gemini needs full context)
+    // Prepare column data with enhanced information including enum values
     const columnData = columns.map(c => {
       const distinctValues = safeParseArray(c.distinctValues);
       return {
@@ -993,10 +993,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let totalQuestionsGenerated = 0;
 
     // Store column descriptions and SME questions
-    // NOTE: No need to filter here since we already filtered before Gemini
     for (const columnResult of contextAndQuestions.columns || []) {
-      const column = filteredColumns.find(c => c.name === columnResult.column_name);
+      const column = columns.find(c => c.name === columnResult.column_name);
       if (!column) continue;
+
+      // Apply filters: Skip timestamp/date columns
+      const isTimestamp = smeInterviewService.isTimestampColumn(column);
+      if (isTimestamp) {
+        console.log(`[Job ${jobId}] ⏭️  Skipping timestamp column: ${table.name}.${column.name} (${column.dataType})`);
+        continue;
+      }
+
+      // Apply filters: Skip high-cardinality columns (>= 20% ratio)
+      const isHighCardinality = smeInterviewService.isHighCardinalityColumn(column, table);
+      if (isHighCardinality) {
+        console.log(`[Job ${jobId}] ⏭️  Skipping high-cardinality column: ${table.name}.${column.name} (cardinality: ${column.cardinality}, rowCount: ${table.rowCount}, ratio: ${column.cardinality && table.rowCount ? ((column.cardinality / table.rowCount) * 100).toFixed(2) : 'N/A'}%)`);
+        continue;
+      }
 
       // Store column AI description
       await storage.updateColumnStats(column.id, {
@@ -1029,9 +1042,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
 
-    // Process enum values for low cardinality columns (use filteredColumns to skip timestamp/high-cardinality)
+    // Process enum values for low cardinality columns
     console.log(`[Job ${jobId}] Processing enum values for table ${table.name}...`);
-    const enumColumnsProcessed = await processEnumValuesForTable(table, filteredColumns, storage, geminiService, jobId);
+    const enumColumnsProcessed = await processEnumValuesForTable(table, columns, storage, geminiService, jobId);
     console.log(`[Job ${jobId}] Processed enum values for ${enumColumnsProcessed} columns in table ${table.name}`);
 
     // Store context for this table using new ContextItem storage
@@ -1082,11 +1095,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       c.distinctValues != null
     );
 
-    console.log(`[Job ${jobId}] Found ${enumColumns.length} enum-like columns in table ${table.name} (already filtered for timestamps/high-cardinality)`);
+    console.log(`[Job ${jobId}] Found ${enumColumns.length} enum-like columns in table ${table.name}`);
 
     for (const column of enumColumns) {
       try {
-        // NOTE: No filtering needed here - columns parameter is already filtered
+        // Apply filters: Skip timestamp/date columns
+        const isTimestamp = smeInterviewService.isTimestampColumn(column);
+        if (isTimestamp) {
+          console.log(`[Job ${jobId}] ⏭️  Skipping timestamp enum column: ${table.name}.${column.name} (${column.dataType})`);
+          continue;
+        }
+
+        // Apply filters: Skip high-cardinality columns (>= 20% ratio)
+        const isHighCardinality = smeInterviewService.isHighCardinalityColumn(column, table);
+        if (isHighCardinality) {
+          console.log(`[Job ${jobId}] ⏭️  Skipping high-cardinality enum column: ${table.name}.${column.name} (cardinality: ${column.cardinality}, rowCount: ${table.rowCount}, ratio: ${column.cardinality && table.rowCount ? ((column.cardinality / table.rowCount) * 100).toFixed(2) : 'N/A'}%)`);
+          continue;
+        }
+
         let distinctValues = safeParseArray(column.distinctValues);
         
         if (distinctValues.length === 0) {
