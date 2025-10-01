@@ -60,4 +60,14 @@ export class EnvironmentService {
   getConnectionMapping() {
     return { ...this.connectionMap };
   }
+
+  /**
+   * Check if Neo4j shared node architecture is enabled
+   * Controlled by NEO4J_USE_CANONICAL_KEYS environment variable
+   */
+  isNeo4jSharedNodesEnabled(): boolean {
+    const enabled = process.env.NEO4J_USE_CANONICAL_KEYS === 'true';
+    console.log(`Neo4j shared node architecture: ${enabled ? 'ENABLED' : 'DISABLED'} (env: NEO4J_USE_CANONICAL_KEYS=${process.env.NEO4J_USE_CANONICAL_KEYS})`);
+    return enabled;
+  }
 }
