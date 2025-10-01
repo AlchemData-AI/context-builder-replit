@@ -10,6 +10,44 @@ The application implements a multi-layered approach to building context:
 
 The core workflow progresses through database connection validation, schema discovery, sampling configuration, statistical analysis, AI context generation, SME interviews, and finally knowledge graph construction.
 
+# Recent Changes (October 2025)
+
+## Shared Node Architecture Implementation
+**Date:** October 1, 2025  
+**Status:** Phase 1 complete - dual-write mode implemented and production-ready
+
+### Overview
+Implemented a new shared node architecture in Neo4j where a single canonical node exists for each table/column/value across multiple data models (personas). This enables:
+- **Context Accumulation**: AI-generated descriptions are reused across personas
+- **Cost Savings**: Reduced LLM API calls by reusing existing context
+- **Automatic Cross-Model Relationships**: Foreign keys discovered in one persona automatically apply to all
+
+### Implementation Details
+1. **Canonical Keys Added (Task 1 - Complete)**
+   - Table nodes: `canonicalKey = ${databaseId}.${schema}.${name}`
+   - Column nodes: `columnKey = ${databaseId}.${schema}.${table}.${column}`
+   - Keys generated automatically for all new nodes
+   - Backward compatible - existing id-based lookups preserved
+
+2. **Feature-Flagged Dual-Write Mode (Task 2 - Complete)**
+   - Environment variable: `NEO4J_USE_CANONICAL_KEYS` (default: false)
+   - When enabled: Nodes MERGE by canonical keys, context shared across personas
+   - When disabled: Legacy id-based behavior (production default)
+   - All methods support both modes: createTableNode, createColumnNode, createValueNode, createRelationship, updateColumnDescription
+   - Last-wins strategy for conflicting descriptions
+
+### Architecture Decisions
+- **One canonical definition per table/column** shared across all personas (not persona-isolated)
+- **Context strategy**: Last-wins with review - new users see existing context, can override
+- **Global relationships**: Foreign keys discovered in any persona automatically apply to all
+- **Backward compatibility**: Fully maintained - no breaking changes to existing functionality
+
+### Pending Tasks
+- Task 3: Add context reuse service to check existing nodes before LLM calls
+- Task 4: Update FK relationship creation to use shared column nodes
+- Task 5: Implement cross-model discovery during persona creation
+- Task 6-8: Migration, deduplication, and testing
+
 # User Preferences
 
 Preferred communication style: Simple, everyday language.
