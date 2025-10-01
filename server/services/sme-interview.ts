@@ -428,6 +428,139 @@ export class SMEInterviewService {
     console.log(`CSV processing complete: ${processed} rows processed, ${updated} questions updated`);
     return { processed, updated };
   }
+
+  async processFKValidationsFromCSV(csvData: string, databaseId: string): Promise<{processed: number, validated: number, rejected: number, skipped: number}> {
+    // Parse CSV and update FK validation status
+    const lines = csvData.trim().split('\n'); // Don't filter blank lines - they separate sections
+    
+    // Reuse the same CSV parser from processCSVResponse for consistency
+    const parseCSVLine = (line: string): string[] => {
+      const result = [];
+      let current = '';
+      let inQuotes = false;
+      
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        
+        if (char === '"') {
+          // Handle escaped quotes ("")
+          if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+            current += '"';
+            i++; // Skip the next quote
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (char === ',' && !inQuotes) {
+          result.push(current.trim());
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      result.push(current.trim());
+      return result;
+    };
+
+    let processed = 0;
+    let validated = 0;
+    let rejected = 0;
+    let skipped = 0;
+    let inFKSection = false;
+    let fkIdIndex = -1;
+    let validationResponseIndex = -1;
+    let sectionIndex = -1;
+
+    // Get all tables for this database once (for security validation)
+    const tables = await storage.getTablesByDatabaseId(databaseId);
+    const tableIds = new Set(tables.map(t => t.id));
+    
+    // Preload all FKs for this database once (performance optimization)
+    const allFKs: any[] = [];
+    for (const tableId of Array.from(tableIds)) {
+      const tableFKs = await storage.getForeignKeysByTableId(tableId);
+      allFKs.push(...tableFKs);
+    }
+    const fkMap = new Map(allFKs.map(fk => [fk.id, fk]));
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue; // Skip truly empty lines but don't remove them from parsing
+      
+      const row = parseCSVLine(line);
+      
+      // Detect FK section header: first column is "Section", contains FK_ID and Validation_Response
+      if (row[0]?.toLowerCase().replace(/['"]/g, '').trim() === 'section' && 
+          row.some(h => h.toLowerCase().replace(/['"]/g, '').includes('fk_id') || h.toLowerCase().replace(/['"]/g, '').includes('fk id')) &&
+          row.some(h => h.toLowerCase().replace(/['"]/g, '').includes('validation_response') || h.toLowerCase().replace(/['"]/g, '').includes('validation response'))) {
+        inFKSection = true;
+        const headers = row.map(h => h.toLowerCase().replace(/['"]/g, '').trim());
+        sectionIndex = headers.findIndex(h => h === 'section');
+        fkIdIndex = headers.findIndex(h => h.includes('fk_id') || h.includes('fk id'));
+        validationResponseIndex = headers.findIndex(h => h.includes('validation_response') || h.includes('validation response'));
+        console.log(`Found FK section header at line ${i+1}: sectionIndex=${sectionIndex}, fkIdIndex=${fkIdIndex}, validationResponseIndex=${validationResponseIndex}`);
+        continue;
+      }
+      
+      // Skip if not in FK section or missing required column indices
+      if (!inFKSection || fkIdIndex === -1 || validationResponseIndex === -1) continue;
+      
+      // Exit FK section if we hit a new section header
+      if (row[sectionIndex]?.toLowerCase().replace(/['"]/g, '').trim() === 'section' && row.length > 1) {
+        inFKSection = false;
+        console.log(`Exiting FK section at line ${i+1}`);
+        continue;
+      }
+      
+      // Skip if not a FOREIGN_KEY data row
+      const sectionValue = row[sectionIndex]?.replace(/['"]/g, '').trim().toUpperCase();
+      if (sectionValue !== 'FOREIGN_KEY') continue;
+      
+      const fkId = row[fkIdIndex]?.replace(/['"]/g, '').trim();
+      const validationResponse = row[validationResponseIndex]?.replace(/['"]/g, '').trim().toUpperCase();
+      
+      if (!fkId) continue;
+      
+      // Skip if validation response is empty or already validated
+      if (!validationResponse || validationResponse === 'YES') continue;
+      
+      processed++;
+      
+      // SECURITY: Verify FK belongs to this database before modifying
+      try {
+        // Lookup FK in preloaded map (performance optimization)
+        const targetFK = fkMap.get(fkId);
+        if (!targetFK) {
+          console.warn(`⚠️  Skipping FK ${fkId}: not found in database ${databaseId}`);
+          skipped++;
+          continue;
+        }
+        
+        // Verify FK's tables belong to this database
+        if (!tableIds.has(targetFK.fromTableId) && !tableIds.has(targetFK.toTableId)) {
+          console.warn(`⚠️  Skipping FK ${fkId}: belongs to different database`);
+          skipped++;
+          continue;
+        }
+        
+        // Process validation response
+        if (['VALIDATED', 'YES', 'Y', 'APPROVE', 'APPROVED', 'TRUE', 'KEEP'].includes(validationResponse)) {
+          await storage.updateForeignKeyValidation(fkId, true);
+          validated++;
+          console.log(`✅ FK ${fkId} marked as validated`);
+        } else if (['REJECTED', 'NO', 'N', 'REJECT', 'DELETE', 'REMOVE', 'FALSE'].includes(validationResponse)) {
+          await storage.deleteForeignKey(fkId);
+          rejected++;
+          console.log(`❌ FK ${fkId} deleted (rejected)`);
+        }
+      } catch (error) {
+        console.error(`Failed to process FK ${fkId}:`, error);
+        skipped++;
+      }
+    }
+
+    console.log(`FK validation processing complete: ${processed} FKs processed, ${validated} validated, ${rejected} rejected, ${skipped} skipped`);
+    return { processed, validated, rejected, skipped };
+  }
 }
 
 export const smeInterviewService = new SMEInterviewService();

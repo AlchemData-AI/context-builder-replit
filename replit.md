@@ -75,8 +75,12 @@ Session-based authentication with Express sessions and PostgreSQL storage, suppo
 - ✅ API route `/api/sme-questions/:id/answer` handles FK validation/deletion based on user responses
 - ✅ Graph building syncs only validated FKs to Neo4j
 - ✅ False positive FKs (title, description) now require user approval before inclusion
+- ✅ **CSV Export/Import Workflow**: Complete FK validation via Excel
+  - Export: `/api/databases/:id/export-csv` includes dedicated FOREIGN_KEY section with FK_ID, table/column names, confidence, and validation status
+  - Import: `/api/databases/:id/upload-csv` parses Validation_Response column (VALIDATED/REJECTED) and updates database accordingly
+  - User workflow: Export CSV → Edit in Excel → Mark FKs as VALIDATED/REJECTED → Import CSV → System updates FK status automatically
 
-**Status**: Critical issue resolved. All FKs go through human-in-the-loop validation.
+**Status**: Critical issue resolved. All FKs go through human-in-the-loop validation via SME questions OR CSV import.
 
 ### Future Enhancement (Optional)
 Add value-level validation to reduce SME questions by pre-filtering obvious non-FKs:

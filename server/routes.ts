@@ -1511,6 +1511,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Add blank line between sections
+      csvOutput += '\n';
+      
+      // SECTION 4: FOREIGN KEYS FOR VALIDATION
+      csvOutput += 'Section,FK_ID,From_Table,From_Column,To_Table,To_Column,Confidence,Is_Validated,Validation_Response,Notes\n';
+      
+      // Get all foreign keys for selected tables
+      const allTablesForFKs = tables;
+      for (const table of allTablesForFKs) {
+        const foreignKeys = await storage.getForeignKeysByTableId(table.id);
+        
+        for (const fk of foreignKeys) {
+          // Get readable table and column names
+          const fromTable = tables.find(t => t.id === fk.fromTableId);
+          const toTable = await storage.getTable(fk.toTableId);
+          const fromColumn = await storage.getColumnById(fk.fromColumnId);
+          const toColumn = await storage.getColumnById(fk.toColumnId);
+          
+          if (!fromTable || !toTable || !fromColumn || !toColumn) continue;
+          
+          const validationResponse = fk.isValidated ? 'VALIDATED' : '';
+          
+          csvOutput += `${safeCSV('FOREIGN_KEY')},${safeCSV(fk.id)},${safeCSV(fromTable.name)},${safeCSV(fromColumn.name)},${safeCSV(toTable.name)},${safeCSV(toColumn.name)},${safeCSV(fk.confidence)},${safeCSV(fk.isValidated ? 'Yes' : 'No')},${safeCSV(validationResponse)},${safeCSV('')}\n`;
+        }
+      }
+      
       // Set response headers
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${database.name}-sme-comprehensive-${new Date().toISOString().split('T')[0]}.csv"`);
@@ -2314,6 +2340,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Process the CSV responses using existing service
         const csvProcessingResult = await smeInterviewService.processCSVResponse(csvData, id);
         
+        // Process FK validations from CSV
+        const fkProcessingResult = await smeInterviewService.processFKValidationsFromCSV(csvData, id);
+        
         // Get updated progress after processing
         const progress = await smeInterviewService.getInterviewProgress(id);
 
@@ -2423,6 +2452,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message: "CSV responses processed successfully",
           progress: progress,
           csvProcessing: csvProcessingResult,
+          fkProcessing: fkProcessingResult,
           knowledgeGraphBuilt: !!graphBuildResult,
           graphStats: graphBuildResult || null,
           personasCreated: personasCreated
