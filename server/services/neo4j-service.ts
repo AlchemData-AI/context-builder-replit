@@ -875,6 +875,82 @@ export class Neo4jService {
       await session.close();
     }
   }
+
+  /**
+   * Find all tables in Neo4j for a given database (by canonical keys)
+   * Used for cross-model discovery when creating new personas
+   */
+  async findTablesByDatabaseId(databaseId: string): Promise<Array<{
+    id: string;
+    name: string;
+    schema: string;
+    canonicalKey: string;
+    personaIds: string[];
+    personas: Array<{ id: string; name: string; description: string }>;
+  }>> {
+    if (!this.useCanonicalKeys) {
+      return []; // Cross-model discovery only works in shared mode
+    }
+
+    const session = this.getSession();
+    try {
+      const result = await session.run(`
+        MATCH (p:AgentPersona)-[:CONTAINS]->(t:Table)
+        WHERE t.canonicalKey STARTS WITH $databasePrefix
+        WITH t, collect(DISTINCT {id: p.id, name: p.name, description: p.description}) as personas
+        RETURN t.id as id,
+               t.name as name,
+               t.schema as schema,
+               t.canonicalKey as canonicalKey,
+               personas
+        ORDER BY t.canonicalKey
+      `, { databasePrefix: `${databaseId}.` });
+
+      return result.records.map(record => ({
+        id: record.get('id'),
+        name: record.get('name'),
+        schema: record.get('schema'),
+        canonicalKey: record.get('canonicalKey'),
+        personaIds: record.get('personas').map((p: any) => p.id),
+        personas: record.get('personas') || []
+      }));
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
+   * Find personas that contain a specific table (by canonical key)
+   * Used to identify overlapping models for cross-model relationships
+   */
+  async findPersonasWithTable(canonicalKey: string): Promise<Array<{
+    id: string;
+    name: string;
+    description: string;
+  }>> {
+    if (!this.useCanonicalKeys) {
+      return [];
+    }
+
+    const session = this.getSession();
+    try {
+      const result = await session.run(`
+        MATCH (p:AgentPersona)-[:CONTAINS]->(t:Table {canonicalKey: $canonicalKey})
+        RETURN DISTINCT p.id as id,
+                        p.name as name,
+                        p.description as description
+        ORDER BY p.name
+      `, { canonicalKey });
+
+      return result.records.map(record => ({
+        id: record.get('id'),
+        name: record.get('name'),
+        description: record.get('description') || ''
+      }));
+    } finally {
+      await session.close();
+    }
+  }
 }
 
 export const neo4jService = new Neo4jService();

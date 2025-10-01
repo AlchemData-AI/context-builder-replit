@@ -1790,6 +1790,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return updatedStats;
   }
 
+  /**
+   * Perform cross-model discovery when a new persona is created
+   * Scans Neo4j for existing tables with matching canonical keys and generates SME questions
+   */
+  async function performCrossModelDiscovery(persona: any) {
+    // Early exit if shared mode is disabled
+    if (!neo4jService.isSharedNodesEnabled()) {
+      console.log('Cross-model discovery skipped (shared mode disabled)');
+      return;
+    }
+    
+    try {
+      console.log(`🔍 Starting cross-model discovery for persona: ${persona.name} (${persona.id})`);
+      
+      const databaseId = persona.databaseId;
+      if (!databaseId) {
+        console.warn('⚠️  Persona has no databaseId, skipping cross-model discovery');
+        return;
+      }
+      
+      // Get all existing tables in Neo4j for this database (with persona details included)
+      const existingTables = await neo4jService.findTablesByDatabaseId(databaseId);
+      console.log(`📊 Found ${existingTables.length} existing tables in Neo4j for database ${databaseId}`);
+      
+      if (existingTables.length === 0) {
+        console.log('✓ No existing tables found, skipping cross-model discovery');
+        return;
+      }
+      
+      // Get tables that will be part of this persona (selected tables)
+      const selectedTables = await storage.getSelectedTables(databaseId);
+      console.log(`📋 Persona will include ${selectedTables.length} selected tables`);
+      
+      // Find overlapping tables (tables that exist in Neo4j and are selected for this persona)
+      const overlaps: Array<{
+        table: any;
+        existingPersonas: Array<{ id: string; name: string; description: string }>;
+        canonicalKey: string;
+      }> = [];
+      
+      for (const table of selectedTables) {
+        const canonicalKey = `${databaseId}.${table.schema}.${table.name}`;
+        const existingTable = existingTables.find(t => t.canonicalKey === canonicalKey);
+        
+        if (existingTable && existingTable.personaIds.length > 0) {
+          // Filter out the newly created persona to avoid self-overlap
+          const otherPersonas = existingTable.personas.filter(p => p.id !== persona.id);
+          
+          // Only create overlap if table exists in OTHER personas (not just self)
+          if (otherPersonas.length > 0) {
+            overlaps.push({
+              table,
+              existingPersonas: otherPersonas,
+              canonicalKey
+            });
+          }
+        }
+      }
+      
+      console.log(`🔗 Found ${overlaps.length} overlapping tables with existing personas`);
+      
+      // Generate SME questions for each overlap
+      for (const overlap of overlaps) {
+        const personaNames = overlap.existingPersonas.map(p => p.name).join(', ');
+        
+        // Create a relationship-type SME question about cross-model connections
+        const question = {
+          databaseId,
+          personaId: persona.id,
+          questionType: 'relationship' as const,
+          questionText: `The table "${overlap.table.name}" appears in multiple personas: "${persona.name}" and "${personaNames}". Are there specific relationships or dependencies between how this table is used across these different business contexts?`,
+          context: JSON.stringify({
+            tableId: overlap.table.id,
+            tableName: overlap.table.name,
+            tableSchema: overlap.table.schema,
+            canonicalKey: overlap.canonicalKey,
+            newPersona: { id: persona.id, name: persona.name },
+            existingPersonas: overlap.existingPersonas,
+            discoveryType: 'cross-model-overlap'
+          })
+        };
+        
+        await storage.createSmeQuestion(question);
+        console.log(`❓ Created cross-model SME question for table: ${overlap.table.name}`);
+      }
+      
+      if (overlaps.length > 0) {
+        console.log(`✅ Cross-model discovery complete: Generated ${overlaps.length} SME questions`);
+      }
+    } catch (error) {
+      // Fail gracefully - don't break persona creation
+      console.error('❌ Cross-model discovery failed (non-fatal):', error instanceof Error ? error.message : error);
+    }
+  }
+
   // Enhanced knowledge graph building function that incorporates SME responses (for new graphs)
   async function buildEnhancedKnowledgeGraph(databaseId: string) {
     const startTime = Date.now();
@@ -1975,8 +2070,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (neo4jService.isSharedNodesEnabled()) {
           try {
             // Get column details to construct canonical keys
-            const fromColumn = fk.fromColumnId ? await storage.getColumn(fk.fromColumnId) : null;
-            const toColumn = fk.toColumnId ? await storage.getColumn(fk.toColumnId) : null;
+            const fromColumn = fk.fromColumnId ? await storage.getColumnById(fk.fromColumnId) : null;
+            const toColumn = fk.toColumnId ? await storage.getColumnById(fk.toColumnId) : null;
             
             if (fromColumn && toColumn) {
               // Get table details for schema information
@@ -2192,6 +2287,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const personaData = insertAgentPersonaSchema.parse(req.body);
       const persona = await storage.createAgentPersona(personaData);
+      
+      // Trigger cross-model discovery if shared mode is enabled
+      if (neo4jService.isSharedNodesEnabled()) {
+        try {
+          await performCrossModelDiscovery(persona);
+        } catch (error) {
+          console.error('Cross-model discovery failed (non-fatal):', error);
+          // Don't fail persona creation if discovery fails
+        }
+      }
+      
       res.json(persona);
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Invalid request" });
