@@ -575,6 +575,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // Run FK discovery after context generation (non-blocking)
+      console.log(`Running FK discovery after context generation for database ${id}...`);
+      try {
+        const fkResult = await performIncrementalJoinDiscovery(id);
+        if (fkResult) {
+          console.log(`FK discovery completed: ${fkResult.discoveredFks.length} relationships discovered, ${fkResult.smeQuestionsCount} questions created`);
+        }
+      } catch (fkError) {
+        console.error(`FK discovery failed (non-fatal):`, fkError);
+      }
+
       await storage.updateAnalysisJob(job.id, {
         status: "completed",
         progress: 100,
@@ -593,28 +604,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       
-      const job = await storage.createAnalysisJob({
-        databaseId: id,
-        type: "join_detection",
-        status: "running",
-        progress: 0,
-        result: null,
-        error: null,
-        startedAt: new Date(),
-        completedAt: null
-      });
-
-      // Run semantic analysis
-      const joinCandidates = await semanticAnalyzer.analyzeJoinCandidates(id);
+      // Run incremental join discovery
+      const fkResult = await performIncrementalJoinDiscovery(id);
       
-      await storage.updateAnalysisJob(job.id, {
-        status: "completed",
-        progress: 100,
-        result: JSON.stringify(joinCandidates),
-        completedAt: new Date()
-      });
-
-      res.json(job);
+      // Return the result directly (expected by frontend)
+      res.json(fkResult || { discoveredFks: [], smeQuestionsCount: 0, persistedCount: 0, skippedCount: 0 });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Join analysis failed" });
     }
@@ -868,6 +862,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (batchEnd < tables.length) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
+      }
+
+      // Run FK discovery after context generation (non-blocking)
+      console.log(`[Job ${jobId}] Running FK discovery after context generation...`);
+      try {
+        const job = await storage.getAnalysisJob(jobId);
+        const fkResult = await performIncrementalJoinDiscovery(job.databaseId);
+        if (fkResult) {
+          console.log(`[Job ${jobId}] FK discovery completed: ${fkResult.discoveredFks.length} relationships discovered, ${fkResult.smeQuestionsCount} questions created`);
+        }
+      } catch (fkError) {
+        console.error(`[Job ${jobId}] FK discovery failed (non-fatal):`, fkError);
       }
 
       // Mark job as completed

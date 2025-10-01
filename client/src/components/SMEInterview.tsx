@@ -116,6 +116,28 @@ export default function SMEInterview() {
     }
   });
 
+  // FK Discovery mutation
+  const discoverForeignKeys = useMutation({
+    mutationFn: async () => {
+      if (!database) throw new Error('No database selected');
+      const res = await apiRequest('POST', `/api/databases/${database.id}/analyze-joins`, {});
+      return res.json();
+    },
+    onSuccess: (data) => {
+      const discovered = data.discoveredFks?.length || 0;
+      const smeQuestions = data.smeQuestionsCount || 0;
+      toast({ 
+        title: "FK Discovery Complete", 
+        description: `Discovered ${discovered} potential relationships. ${smeQuestions} validation questions added.` 
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/databases', database?.id, 'sme-questions'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/databases', database?.id, 'sme-progress'] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "FK Discovery failed", description: error.message, variant: "destructive" });
+    }
+  });
+
   const handleResponseChange = (questionId: string, value: string) => {
     setResponses(prev => ({ ...prev, [questionId]: value }));
   };
@@ -192,6 +214,15 @@ export default function SMEInterview() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-semibold" data-testid="sme-interview-title">SME Interview & Validation</h2>
         <div className="flex space-x-2">
+          <Button 
+            variant="outline"
+            onClick={() => discoverForeignKeys.mutate()}
+            disabled={discoverForeignKeys.isPending}
+            data-testid="button-discover-fks"
+          >
+            <i className={`fas ${discoverForeignKeys.isPending ? 'fa-spinner fa-spin' : 'fa-project-diagram'} mr-2`}></i>
+            {discoverForeignKeys.isPending ? 'Discovering...' : 'Discover Relationships'}
+          </Button>
           <Button 
             variant="outline"
             onClick={exportCSV}
