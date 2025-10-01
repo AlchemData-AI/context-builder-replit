@@ -9,6 +9,7 @@ import { schemaAnalyzer } from "./services/schema-analyzer";
 import { statisticalAnalyzer } from "./services/statistical-analyzer";
 import { semanticAnalyzer } from "./services/semantic-analyzer";
 import { smeInterviewService } from "./services/sme-interview";
+import { neo4jBackfillService } from "./services/neo4j-backfill";
 import { EnvironmentService } from "./services/environment-service";
 import { insertConnectionSchema, insertDatabaseSchema, insertTableSchema, insertAgentPersonaSchema } from "@shared/schema";
 import { z } from "zod";
@@ -2671,6 +2672,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to get graph stats" });
+    }
+  });
+
+  // Backfill canonical keys for existing Neo4j nodes
+  app.post("/api/neo4j/backfill-canonical-keys", async (req, res) => {
+    try {
+      console.log('🔄 Starting canonical key backfill migration...');
+      const result = await neo4jBackfillService.backfillCanonicalKeys();
+      
+      if (result.success) {
+        console.log(`✅ Backfill completed: ${result.tablesUpdated} tables, ${result.columnsUpdated} columns updated`);
+        res.json(result);
+      } else {
+        console.error('❌ Backfill failed:', result.errors);
+        res.status(500).json(result);
+      }
+    } catch (error) {
+      console.error('❌ Backfill endpoint error:', error);
+      res.status(500).json({ 
+        success: false,
+        tablesUpdated: 0,
+        columnsUpdated: 0,
+        valuesUpdated: 0,
+        errors: [error instanceof Error ? error.message : String(error)]
+      });
+    }
+  });
+
+  // Get statistics on nodes missing canonical keys
+  app.get("/api/neo4j/backfill-stats", async (req, res) => {
+    try {
+      const stats = await neo4jBackfillService.getBackfillStatistics();
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to get backfill stats" });
     }
   });
 

@@ -137,6 +137,20 @@ export class Neo4jService {
     }
   }
 
+  /**
+   * Execute a Cypher query and return results
+   * Public method for executing custom queries (used by backfill service)
+   */
+  async executeQuery(query: string, parameters: Record<string, any> = {}): Promise<any> {
+    const session = this.getSession();
+    try {
+      const result = await session.run(query, parameters);
+      return result;
+    } finally {
+      await session.close();
+    }
+  }
+
   private getSession(): Session {
     if (!this.driver) {
       throw new Error('Not connected to Neo4j');
