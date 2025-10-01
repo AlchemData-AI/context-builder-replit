@@ -112,6 +112,7 @@ export class SMEInterviewService {
         // Skip high-cardinality columns (cardinality ratio >= 20%)
         // These are typically IDs or near-unique columns that don't need SME validation
         if (this.isHighCardinalityColumn(column, table)) {
+          console.log(`⏭️  Skipping high-cardinality column: ${table.name}.${column.name} (cardinality: ${column.cardinality}, rowCount: ${table.rowCount}, ratio: ${column.cardinality && table.rowCount ? ((column.cardinality / table.rowCount) * 100).toFixed(2) : 'N/A'}%)`);
           continue;
         }
 
@@ -380,6 +381,7 @@ export class SMEInterviewService {
   private isHighCardinalityColumn(column: Column, table: Table): boolean {
     // If cardinality or row count is not available, don't filter
     if (!column.cardinality || !table.rowCount) {
+      console.log(`⚠️  Cannot calculate cardinality ratio for ${table.name}.${column.name} - cardinality: ${column.cardinality}, rowCount: ${table.rowCount}`);
       return false;
     }
 
@@ -388,7 +390,13 @@ export class SMEInterviewService {
 
     // Filter out columns with >= 20% cardinality ratio
     // These are typically IDs, order IDs, date partitions, or other near-unique columns
-    return cardinalityRatio >= 0.2;
+    const shouldFilter = cardinalityRatio >= 0.2;
+    
+    if (shouldFilter) {
+      console.log(`🚫 High-cardinality filter: ${table.name}.${column.name} - ${(cardinalityRatio * 100).toFixed(2)}% (${column.cardinality}/${table.rowCount})`);
+    }
+    
+    return shouldFilter;
   }
 
   private determinePriority(
