@@ -28,7 +28,11 @@ export interface ColumnAnalysis {
 }
 
 export class StatisticalAnalyzer {
-  async analyzeTable(tableId: string, onProgress?: (progress: number) => void): Promise<StatisticalAnalysisResult> {
+  async analyzeTable(
+    tableId: string, 
+    onProgress?: (progress: number) => void, 
+    manageConnection: boolean = true
+  ): Promise<StatisticalAnalysisResult> {
     const table = await storage.getTable(tableId);
     if (!table) {
       throw new Error('Table not found');
@@ -44,11 +48,13 @@ export class StatisticalAnalyzer {
       throw new Error('Connection not found');
     }
 
-    // Connect to PostgreSQL
-    const config = connection.config as any;
-    const connected = await postgresAnalyzer.connect(config);
-    if (!connected) {
-      throw new Error('Failed to connect to PostgreSQL');
+    // Connect to PostgreSQL (only if managing connection)
+    if (manageConnection) {
+      const config = connection.config as any;
+      const connected = await postgresAnalyzer.connect(config);
+      if (!connected) {
+        throw new Error('Failed to connect to PostgreSQL');
+      }
     }
 
     try {
@@ -131,7 +137,10 @@ export class StatisticalAnalyzer {
         progress: 100
       };
     } finally {
-      await postgresAnalyzer.disconnect();
+      // Only disconnect if we managed the connection
+      if (manageConnection) {
+        await postgresAnalyzer.disconnect();
+      }
     }
   }
 

@@ -419,26 +419,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const results = [];
         let totalProgress = 0;
         
-        for (let i = 0; i < tables.length; i++) {
-          const table = tables[i];
-          
-          try {
-            console.log(`Analyzing table ${i + 1}/${tables.length}: ${table.name}`);
+        // Get database connection info once
+        const database = await storage.getDatabase(id);
+        if (!database) {
+          throw new Error('Database not found');
+        }
+        
+        const connection = await storage.getConnection(database.connectionId);
+        if (!connection) {
+          throw new Error('Connection not found');
+        }
+        
+        // Connect once for all tables
+        const connected = await postgresAnalyzer.connect(connection.config as any);
+        if (!connected) {
+          throw new Error('Failed to connect to PostgreSQL');
+        }
+        
+        try {
+          for (let i = 0; i < tables.length; i++) {
+            const table = tables[i];
             
-            const result = await statisticalAnalyzer.analyzeTable(table.id, (columnProgress) => {
-              // Update progress: (completed tables + current table progress) / total tables
-              const overallProgress = Math.round(((i + (columnProgress / 100)) / tables.length) * 100);
-              storage.updateAnalysisJob(job.id, { progress: overallProgress });
-            });
-            
-            results.push(result);
-            totalProgress = Math.round(((i + 1) / tables.length) * 100);
-            await storage.updateAnalysisJob(job.id, { progress: totalProgress });
-            
-          } catch (error) {
-            console.error(`Failed to analyze table ${table.name}:`, error);
-            results.push({ error: error instanceof Error ? error.message : "Unknown error", tableId: table.id, tableName: table.name });
+            try {
+              console.log(`Analyzing table ${i + 1}/${tables.length}: ${table.name}`);
+              
+              // Pass manageConnection: false since we're managing it here
+              const result = await statisticalAnalyzer.analyzeTable(table.id, (columnProgress) => {
+                // Update progress: (completed tables + current table progress) / total tables
+                const overallProgress = Math.round(((i + (columnProgress / 100)) / tables.length) * 100);
+                storage.updateAnalysisJob(job.id, { progress: overallProgress });
+              }, false);
+              
+              results.push(result);
+              totalProgress = Math.round(((i + 1) / tables.length) * 100);
+              await storage.updateAnalysisJob(job.id, { progress: totalProgress });
+              
+            } catch (error) {
+              console.error(`Failed to analyze table ${table.name}:`, error);
+              results.push({ error: error instanceof Error ? error.message : "Unknown error", tableId: table.id, tableName: table.name });
+            }
           }
+        } finally {
+          // Disconnect once after all tables
+          await postgresAnalyzer.disconnect();
         }
 
         return results;
