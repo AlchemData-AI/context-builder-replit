@@ -2533,17 +2533,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         console.log('Starting knowledge graph build process...');
         
-        // Create namespace for this database
-        const namespace = `database_${id}`;
-        console.log('Creating namespace:', namespace);
-        await neo4jService.createNamespace(namespace);
-        
-        // Get personas and their tables
-        console.log('Fetching personas for database:', id);
+        // If no personas exist, create default personas first
         let personas = await storage.getPersonasByDatabaseId(id);
-        console.log('Found personas:', personas.length);
-        
-        // If no personas exist, create default personas from SME responses and tables
         if (personas.length === 0) {
           console.log('No personas found, creating default personas from available data...');
           try {
@@ -2555,162 +2546,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
         
-        for (const persona of personas) {
-          // Create Agent Persona node
-          await neo4jService.createAgentPersona({
-            id: persona.id,
-            name: persona.name,
-            description: persona.description,
-            keywords: Array.isArray(persona.keywords) ? persona.keywords as string[] : [],
-            namespace
-          });
-          
-          // Get tables for this persona (for now, just get all selected tables)
-          const tables = await storage.getSelectedTables(id);
-          
-          for (const table of tables) {
-            // Create Table node
-            await neo4jService.createTableNode(persona.id, {
-              id: table.id,
-              name: table.name,
-              schema: table.schema,
-              description: `Table containing ${table.columnCount || 0} columns with data analysis context`,
-              rowCount: table.rowCount ?? undefined,
-              columnCount: table.columnCount ?? undefined,
-              databaseId: table.databaseId
-            });
-            
-            // Get and create Column nodes
-            const columns = await storage.getColumnsByTableId(table.id);
-            
-            for (const column of columns) {
-              await neo4jService.createColumnNode(table.id, {
-                id: column.id,
-                name: column.name,
-                dataType: column.dataType,
-                description: column.aiDescription ?? undefined,
-                isNullable: column.isNullable ?? false,
-                cardinality: column.cardinality ?? undefined,
-                nullPercentage: parseFloat(column.nullPercentage || '0'),
-                databaseId: table.databaseId,
-                tableSchema: table.schema,
-                tableName: table.name
-              });
-              
-              // Create Value nodes for low-cardinality columns with AI context from enum values
-              console.log(`[DEBUG] Column ${column.name}: cardinality=${column.cardinality}, hasDistinctValues=${!!column.distinctValues}, distinctValues=${JSON.stringify(column.distinctValues).substring(0, 100)}...`);
-              if (column.cardinality && column.cardinality < 100 && column.distinctValues) {
-                console.log(`[DEBUG] ✓ Column ${column.name} PASSED condition check - will create value nodes`);
-                // Get enum values with AI context if they exist
-                const enumValues = await storage.getEnumValuesByColumnId(column.id);
-                const enumValueMap = new Map();
-                enumValues.forEach((ev: any) => {
-                  enumValueMap.set(ev.value, { aiContext: ev.aiContext, aiHypothesis: ev.aiHypothesis });
-                });
-                
-                let values = [];
-                let valueNodesCreated = 0;
-                let valueNodesWithContext = 0;
-                
-                // Try multiple parsing strategies for distinctValues
-                try {
-                  values = JSON.parse(String(column.distinctValues));
-                } catch (jsonError) {
-                  // Fallback: try CSV parsing for comma-separated values
-                  try {
-                    values = String(column.distinctValues).split(',').map(v => v.trim()).filter(v => v.length > 0);
-                    console.log(`Used CSV fallback for column ${column.name}: ${values.length} values`);
-                  } catch (csvError) {
-                    // Final fallback: semicolon or newline separated
-                    values = String(column.distinctValues).split(/[;\n]/).map(v => v.trim()).filter(v => v.length > 0);
-                    console.log(`Used delimiter fallback for column ${column.name}: ${values.length} values`);
-                  }
-                }
-                
-                if (!Array.isArray(values) || values.length === 0) {
-                  console.warn(`No parseable values found for column ${column.name}, skipping value nodes`);
-                } else {
-                  for (const value of values) {
-                    const enumData = enumValueMap.get(String(value));
-                    await neo4jService.createValueNode(column.id, {
-                      id: `${column.id}_${value}`,
-                      value: String(value),
-                      aiContext: enumData?.aiContext,
-                      aiHypothesis: enumData?.aiHypothesis
-                    });
-                    valueNodesCreated++;
-                    if (enumData?.aiContext || enumData?.aiHypothesis) {
-                      valueNodesWithContext++;
-                    }
-                  }
-                  
-                  console.log(`Created ${valueNodesCreated} value nodes for column ${column.name} (${valueNodesWithContext} with AI context)`);
-                }
-              }
-            }
-          }
-        }
+        // Use the updateEnhancedKnowledgeGraph function which includes join discovery
+        const stats = await updateEnhancedKnowledgeGraph(id);
         
-        // Create relationships based on foreign keys
-        const allTables = await storage.getTablesByDatabaseId(id);
-        for (const table of allTables) {
-          const foreignKeys = await storage.getForeignKeysByTableId(table.id);
-          
-          for (const fk of foreignKeys) {
-            if (fk.isValidated) {
-              await neo4jService.createRelationship({
-                fromId: fk.fromColumnId,
-                toId: fk.toColumnId,
-                type: 'REFERENCES',
-                properties: {
-                  confidence: parseFloat(fk.confidence || '1.0'),
-                  validated: true
-                }
-              });
-            }
-          }
-        }
-        
-        // Process SME relationship questions to create validated joins
-        let totalSMERelationships = 0;
-        console.log('Processing SME relationship questions for all personas...');
-        
-        for (const persona of personas) {
-          const personaQuestions = await storage.getQuestionsByDatabaseId(id);
-          const relationshipQuestions = personaQuestions.filter((q: any) => q.isAnswered && q.questionType === 'relationship');
-          
-          console.log(`Processing ${relationshipQuestions.length} answered relationship questions for persona ${persona.name}`);
-          
-          for (const question of relationshipQuestions) {
-            try {
-              // Process validated join suggestions from SME responses
-              const joinInfo = await extractJoinInfoFromSMEResponse(question.questionText, question.response || '', id);
-              if (joinInfo) {
-                // Create SME-validated relationship in Neo4j
-                await neo4jService.createRelationship({
-                  fromId: joinInfo.fromId,
-                  toId: joinInfo.toId,
-                  type: 'SME_VALIDATED_JOIN',
-                  properties: {
-                    confidence: 0.9,
-                    source: 'SME',
-                    questionId: question.id
-                  }
-                });
-                
-                totalSMERelationships++;
-                console.log(`Created SME-validated relationship: ${joinInfo.fromId} -> ${joinInfo.toId} (question ${question.id})`);
-              } else {
-                console.log(`No join info extracted for question ${question.id} - response was not affirmative`);
-              }
-            } catch (error) {
-              console.error(`Failed to process relationship question ${question.id}:`, error);
-            }
-          }
-        }
-        
-        console.log(`Graph build completed. Total SME-validated relationships created: ${totalSMERelationships}`);
-        res.json({ success: true, namespace, smeRelationships: totalSMERelationships });
+        console.log(`Graph build completed successfully:`, stats);
+        res.json({ success: true, stats });
         
       } finally {
         await neo4jService.disconnect();

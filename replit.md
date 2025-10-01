@@ -45,8 +45,56 @@ Session-based authentication with Express sessions and PostgreSQL storage, suppo
 
 ## Key Features
 - **Incremental Join Discovery**: Automated detection of foreign key relationships using PostgreSQL catalog extraction and semantic analysis with heuristic pattern matching.
+  - **Status**: Infrastructure complete but requires FK validation gates (see # Recent Changes below)
+  - Catalog extraction: ✅ Working
+  - Semantic analysis: ✅ Working  
+  - Integration: ✅ Integrated into build pipeline
+  - **Issue**: Current heuristic promotes descriptive columns (title, description) as FKs - needs value-level validation
 - **Context Reuse**: Checks Neo4j for existing canonical nodes before LLM calls to reduce costs.
 - **Cross-Model Relationship Discovery**: Automatically detects overlapping tables and generates SME questions for validation.
+
+# Recent Changes
+
+## Incremental Join Discovery - October 1, 2025
+
+### Completed
+- ✅ Implemented IncrementalJoinDiscoveryService with PostgreSQL catalog extraction
+- ✅ Three-tier semantic analysis (exact match 0.85, FK pattern 0.80, suffix 0.65)
+- ✅ Integrated into knowledge graph build pipeline  
+- ✅ Successfully tested with clinical trials database (discovered 34 relationships)
+- ✅ Cross-persona FK relationships using canonical keys
+
+### Architect Review Findings  
+**Critical Issue Identified**: Current heuristic incorrectly promotes descriptive columns as FKs.
+
+**Problem**: Heuristic 1 (exact name + type match = 0.85 confidence) creates false positives. Example:
+- `baseline_measurements.title` → `outcome_measurements.title` is NOT a foreign key
+- `baseline_measurements.description` → `outcome_measurements.description` is NOT a foreign key
+- These are shared descriptive attributes, not relational keys
+
+**Root Cause**: Missing value-level validation. Real FKs require:
+1. **Target uniqueness**: Target column should be >95% distinct (near-unique)
+2. **Referential coverage**: >95% of source values exist in target
+3. **Cardinality**: Many-to-one relationship pattern
+4. **Column patterns**: Prioritize _id suffixes, numeric types, indexed/PK columns
+
+### Required Next Actions
+1. **Add FK Validation Function**: Create `validateForeignKeyRelationship()` that:
+   - Queries actual data to check target distinctness
+   - Measures referential coverage (value overlap)
+   - Validates cardinality patterns
+   - Checks column naming (is it ID-like?)
+2. **Update Heuristic 1**: Call validation before assigning 0.85 confidence
+   - Descriptive columns (title, description, etc.) → downgrade to 0.65 (SME review)
+   - ID-like columns with high validation scores → keep 0.85 (auto-persist)
+3. **Add Test Assertions**: Verify descriptive columns are NOT auto-promoted
+4. **Fix Graph Idempotency**: Ensure MERGE for all relationships (prevent duplicates)
+
+### Test Data
+- Database: ctgov (Clinical Trials)
+- Tables: outcome_measurements + baseline_measurements
+- Current result: 34 "FKs" discovered (includes false positives)
+- Expected result after fix: ~5-10 real FKs (id, nct_id, result_group_id, etc.)
 
 # External Dependencies
 
