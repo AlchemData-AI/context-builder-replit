@@ -130,14 +130,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const connectionData = insertConnectionSchema.parse(req.body);
       const userId = req.body.userId || "default-user"; // In real app, get from auth
-      
+
+      // Check for duplicate connection name
+      const existingConnections = await storage.getConnectionsByUserId(userId);
+      const duplicate = existingConnections.find(
+        conn => conn.name.toLowerCase() === connectionData.name.toLowerCase()
+      );
+
+      if (duplicate) {
+        return res.status(409).json({
+          error: "Connection with this name already exists",
+          existingId: duplicate.id
+        });
+      }
+
       const connection = await storage.createConnection({
         ...connectionData,
         userId
       });
-      
+
       res.json(connection);
     } catch (error) {
+      console.error("POST /api/connections error:", error);
       res.status(400).json({ error: error instanceof Error ? error.message : "Invalid request" });
     }
   });
@@ -148,6 +162,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const connections = await storage.getConnectionsByUserId(userId);
       res.json(connections);
     } catch (error) {
+      console.error("GET /api/connections error:", error);
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch connections" });
     }
   });
@@ -186,10 +201,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           break;
           
         case 'gemini':
-          // Test Gemini API by making a simple request
+          // Test Gemini API by making a simple request with the connection's API key
           try {
-            await geminiService.generateTableDescription("test", "test", []);
-            testResult = { success: true, latency: 100 };
+            const { GoogleGenAI } = await import("@google/genai");
+            const config = connection.config as any;
+            const testAi = new GoogleGenAI({ apiKey: config.apiKey });
+
+            // Simple test prompt
+            const startTime = Date.now();
+            const result = await testAi.models.generateContent({
+              model: "gemini-2.5-flash",
+              contents: "Say hello"
+            });
+            const latency = Date.now() - startTime;
+
+            if (result?.text) {
+              testResult = { success: true, latency };
+            } else {
+              testResult = { success: false, error: "Invalid API response" };
+            }
           } catch (error) {
             testResult = { success: false, error: error instanceof Error ? error.message : "API test failed" };
           }

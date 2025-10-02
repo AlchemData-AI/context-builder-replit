@@ -7,6 +7,7 @@ export interface PostgresConfig {
   database?: string;
   user?: string;
   password?: string;
+  ssl?: boolean;
 }
 
 export interface TableInfo {
@@ -40,14 +41,26 @@ export class PostgresAnalyzer {
 
   async connect(config: PostgresConfig): Promise<boolean> {
     try {
-      this.pool = new Pool(config);
+      // Auto-enable SSL for Azure PostgreSQL or if explicitly requested
+      const shouldUseSSL = config.ssl !== false && (
+        config.ssl === true ||
+        config.host?.includes('azure.com') ||
+        config.host?.includes('postgres.database')
+      );
+
+      const poolConfig = {
+        ...config,
+        ssl: shouldUseSSL ? { rejectUnauthorized: false } : undefined
+      };
+
+      this.pool = new Pool(poolConfig);
       this.isDisconnecting = false;
-      
+
       // Test connection
       const client = await this.pool.connect();
       await client.query('SELECT 1');
       client.release();
-      
+
       return true;
     } catch (error) {
       console.error('PostgreSQL connection failed:', error);

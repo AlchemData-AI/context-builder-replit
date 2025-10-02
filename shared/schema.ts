@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, boolean, decimal } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, boolean, decimal, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -18,7 +18,10 @@ export const connections = pgTable("connections", {
   status: text("status").default("pending"), // 'connected', 'failed', 'pending'
   lastTested: timestamp("last_tested"),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => ({
+  // Unique constraint: one user cannot have multiple connections with the same name
+  uniqueUserConnection: unique().on(table.userId, table.name),
+}));
 
 export const databases = pgTable("databases", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -148,7 +151,7 @@ export const insertConnectionSchema = createInsertSchema(connections).pick({
   name: true,
   type: true,
   config: true,
-});
+}).strip(); // Ignore extra fields like userId
 
 export const insertDatabaseSchema = createInsertSchema(databases).pick({
   connectionId: true,
