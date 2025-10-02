@@ -12,6 +12,9 @@ export interface StatisticalAnalysisResult {
   numericColumns: Column[];
   categoricalColumns: Column[];
   progress: number;
+  sampleStrategy?: string;
+  sampleSize?: number;
+  sampleOffset?: number;
 }
 
 export interface ColumnAnalysis {
@@ -29,8 +32,10 @@ export interface ColumnAnalysis {
 
 export class StatisticalAnalyzer {
   async analyzeTable(
-    tableId: string, 
-    onProgress?: (progress: number) => void, 
+    tableId: string,
+    sampleStrategy: 'top' | 'bottom' | 'random' = 'top',
+    sampleOffset: number = 0,
+    onProgress?: (progress: number) => void,
     manageConnection: boolean = true
   ): Promise<StatisticalAnalysisResult> {
     const table = await storage.getTable(tableId);
@@ -62,15 +67,29 @@ export class StatisticalAnalyzer {
       const totalColumns = columns.length;
       let analyzedColumns = 0;
 
+      // Fetch 1K sample rows once
+      const sampleRows = await postgresAnalyzer.fetchSampleRows(
+        table.name,
+        table.schema,
+        sampleStrategy,
+        sampleOffset,
+        table.sampleSize || 1000
+      );
+
+      if (sampleRows.length === 0) {
+        throw new Error('No sample data available');
+      }
+
       const lowCardinalityColumns: Column[] = [];
       const highNullColumns: Column[] = [];
       const numericColumns: Column[] = [];
       const categoricalColumns: Column[] = [];
 
+      // Analyze each column using in-memory calculations
       for (const column of columns) {
         try {
-          const analysis = await this.analyzeColumn(table, column);
-          
+          const analysis = this.calculateColumnStats(sampleRows, column.name, column.dataType);
+
           // Update column with analysis results
           await storage.updateColumnStats(column.id, {
             cardinality: analysis.cardinality,
@@ -125,6 +144,17 @@ export class StatisticalAnalyzer {
         }
       }
 
+      // Update table with sample metadata
+      const samplesAnalyzed = (table.samplesAnalyzed || 0) + 1;
+      const lastSampleStrategy = sampleStrategy === 'random'
+        ? `random_${sampleOffset}`
+        : sampleStrategy;
+
+      await storage.updateTable(tableId, {
+        samplesAnalyzed,
+        lastSampleStrategy
+      });
+
       return {
         tableId,
         tableName: table.name,
@@ -134,7 +164,10 @@ export class StatisticalAnalyzer {
         highNullColumns,
         numericColumns,
         categoricalColumns,
-        progress: 100
+        progress: 100,
+        sampleStrategy,
+        sampleSize: table.sampleSize || 1000,
+        sampleOffset: sampleStrategy === 'random' ? sampleOffset : undefined
       };
     } finally {
       // Only disconnect if we managed the connection
@@ -144,53 +177,55 @@ export class StatisticalAnalyzer {
     }
   }
 
-  private async analyzeColumn(table: Table, column: Column): Promise<ColumnAnalysis> {
-    // Get cardinality
-    const cardinality = await postgresAnalyzer.getColumnCardinality(
-      table.name, 
-      column.name, 
-      table.schema
-    );
+  private calculateColumnStats(
+    sampleRows: any[],
+    columnName: string,
+    dataType: string
+  ): {
+    cardinality: number;
+    nullPercentage: number;
+    minValue?: any;
+    maxValue?: any;
+    distinctValues?: any[];
+    patterns: string[];
+    recommendations: string[];
+  } {
+    const values = sampleRows.map(row => row[columnName]);
+    const nonNullValues = values.filter(v => v !== null && v !== undefined);
 
-    // Get null percentage
-    const nullPercentage = await postgresAnalyzer.getColumnNullPercentage(
-      table.name, 
-      column.name, 
-      table.schema
-    );
+    // Calculate basic stats
+    const totalRows = values.length;
+    const nullCount = totalRows - nonNullValues.length;
+    const nullPercentage = (nullCount / totalRows) * 100;
+    const uniqueValues = new Set(nonNullValues);
+    const cardinality = uniqueValues.size;
 
-    let minValue, maxValue, distinctValues;
+    let minValue: any = undefined;
+    let maxValue: any = undefined;
+    let distinctValues: any[] | undefined = undefined;
     const patterns: string[] = [];
     const recommendations: string[] = [];
 
-    // Analyze numeric columns
-    if (this.isNumericType(column.dataType)) {
-      const range = await postgresAnalyzer.getColumnRange(table.name, column.name, table.schema);
-      minValue = range.min;
-      maxValue = range.max;
-      
-      patterns.push(`Numeric range: ${minValue} to ${maxValue}`);
-      
-      if (minValue !== null && maxValue !== null) {
-        const rangeSize = maxValue - minValue;
-        if (rangeSize === 0) {
+    // Numeric analysis
+    if (this.isNumericType(dataType) && nonNullValues.length > 0) {
+      const numericValues = nonNullValues.map(v => Number(v)).filter(v => !isNaN(v));
+      if (numericValues.length > 0) {
+        minValue = Math.min(...numericValues);
+        maxValue = Math.max(...numericValues);
+
+        patterns.push(`Numeric range: ${minValue} to ${maxValue}`);
+
+        if (minValue === maxValue) {
           patterns.push('Constant value');
           recommendations.push('Consider if this column is necessary');
-        } else if (cardinality / rangeSize < 0.1) {
-          patterns.push('Sparse numeric distribution');
         }
       }
     }
 
-    // Analyze categorical columns
+    // Categorical analysis
     if (cardinality <= 100) {
-      distinctValues = await postgresAnalyzer.getDistinctValues(
-        table.name, 
-        column.name, 
-        100, 
-        table.schema
-      );
-      
+      distinctValues = Array.from(uniqueValues).slice(0, 100);
+
       if (cardinality <= 10) {
         patterns.push('Low cardinality - likely categorical');
         recommendations.push('Consider creating enum values for knowledge graph');
@@ -200,7 +235,7 @@ export class StatisticalAnalyzer {
       }
     }
 
-    // Analyze null patterns
+    // Null pattern analysis
     if (nullPercentage > 80) {
       patterns.push('Very high null percentage');
       recommendations.push('Investigate why most values are null');
@@ -212,19 +247,20 @@ export class StatisticalAnalyzer {
       recommendations.push('Potentially required field');
     }
 
-    // Analyze cardinality patterns
+    // Cardinality patterns
     if (cardinality === 1) {
       patterns.push('Single unique value');
       recommendations.push('Consider removing constant column');
-    } else if (cardinality === (table.rowCount || 0)) {
+    } else if (cardinality === totalRows) {
       patterns.push('All values unique');
       recommendations.push('Likely primary key or identifier');
     }
 
     // Text pattern analysis
-    if (this.isTextType(column.dataType) && distinctValues) {
-      const avgLength = distinctValues.reduce((sum, val) => sum + String(val).length, 0) / distinctValues.length;
-      
+    if (this.isTextType(dataType) && distinctValues && distinctValues.length > 0) {
+      const stringValues = distinctValues.map(v => String(v));
+      const avgLength = stringValues.reduce((sum, val) => sum + val.length, 0) / stringValues.length;
+
       if (avgLength < 10) {
         patterns.push('Short text values');
       } else if (avgLength > 100) {
@@ -232,20 +268,17 @@ export class StatisticalAnalyzer {
         recommendations.push('Consider if this should be analyzed differently');
       }
 
-      // Check for patterns in text
-      const hasEmailPattern = distinctValues.some(val => String(val).includes('@'));
-      const hasUrlPattern = distinctValues.some(val => String(val).startsWith('http'));
-      const hasPhonePattern = distinctValues.some(val => /^\+?[\d\s\-\(\)]+$/.test(String(val)));
-      
+      // Check for patterns
+      const hasEmailPattern = stringValues.some(val => val.includes('@'));
+      const hasUrlPattern = stringValues.some(val => val.startsWith('http'));
+      const hasPhonePattern = stringValues.some(val => /^\+?[\d\s\-\(\)]+$/.test(val));
+
       if (hasEmailPattern) patterns.push('Email addresses detected');
       if (hasUrlPattern) patterns.push('URLs detected');
       if (hasPhonePattern) patterns.push('Phone numbers detected');
     }
 
     return {
-      columnId: column.id,
-      columnName: column.name,
-      dataType: column.dataType,
       cardinality,
       nullPercentage,
       minValue,

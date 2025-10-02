@@ -221,8 +221,8 @@ export class PostgresAnalyzer {
   }
 
   async getSampleData(
-    tableName: string, 
-    sampleSize: number = 1000, 
+    tableName: string,
+    sampleSize: number = 1000,
     schemaName: string = 'public'
   ): Promise<any[]> {
     if (!this.pool) throw new Error('Not connected to database');
@@ -250,6 +250,72 @@ export class PostgresAnalyzer {
     }
 
     return [];
+  }
+
+  async getPrimaryKeyColumn(
+    tableName: string,
+    schemaName: string = 'public'
+  ): Promise<string | null> {
+    if (!this.pool) throw new Error('Not connected to database');
+
+    const query = `
+      SELECT kcu.column_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+        AND tc.table_schema = kcu.table_schema
+      WHERE tc.constraint_type = 'PRIMARY KEY'
+        AND tc.table_name = $1
+        AND tc.table_schema = $2
+      LIMIT 1
+    `;
+
+    try {
+      const result = await this.pool.query(query, [tableName, schemaName]);
+      if (result.rows.length > 0) {
+        return result.rows[0].column_name;
+      }
+    } catch (error) {
+      console.error('Error getting primary key:', error);
+    }
+
+    return null;
+  }
+
+  async fetchSampleRows(
+    tableName: string,
+    schemaName: string = 'public',
+    strategy: 'top' | 'bottom' | 'random' = 'top',
+    offset: number = 0,
+    sampleSize: number = 1000
+  ): Promise<any[]> {
+    if (!this.pool) throw new Error('Not connected to database');
+
+    // Get primary key or use ctid as fallback
+    const pkColumn = await this.getPrimaryKeyColumn(tableName, schemaName);
+    const orderColumn = pkColumn || 'ctid';
+
+    let query: string;
+
+    if (strategy === 'top') {
+      // Top 1K rows ordered by PK ascending
+      query = `SELECT * FROM "${schemaName}"."${tableName}" ORDER BY "${orderColumn}" ASC LIMIT $1`;
+    } else if (strategy === 'bottom') {
+      // Bottom 1K rows ordered by PK descending
+      query = `SELECT * FROM "${schemaName}"."${tableName}" ORDER BY "${orderColumn}" DESC LIMIT $1`;
+    } else {
+      // Random sampling with offset
+      query = `SELECT * FROM "${schemaName}"."${tableName}" ORDER BY "${orderColumn}" ASC LIMIT $1 OFFSET $2`;
+    }
+
+    try {
+      const params = strategy === 'random' ? [sampleSize, offset] : [sampleSize];
+      const result = await this.pool.query(query, params);
+      return result.rows;
+    } catch (error) {
+      console.error(`Error fetching sample (${strategy}):`, error);
+      throw error;
+    }
   }
 
   async getColumnCardinality(

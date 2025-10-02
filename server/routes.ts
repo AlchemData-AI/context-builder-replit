@@ -367,7 +367,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/tables/:id/analyze-statistics", async (req, res) => {
     try {
       const { id } = req.params;
-      
+
       // Create analysis job
       const table = await storage.getTable(id);
       if (!table) {
@@ -379,29 +379,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Cannot analyze unselected table. Please select the table first." });
       }
 
+      // Auto-determine sample strategy based on samplesAnalyzed count
+      const samplesAnalyzed = table.samplesAnalyzed || 0;
+      let sampleStrategy: 'top' | 'bottom' | 'random';
+      let sampleOffset = 0;
+
+      if (samplesAnalyzed === 0) {
+        sampleStrategy = 'top';
+      } else if (samplesAnalyzed === 1) {
+        sampleStrategy = 'bottom';
+      } else {
+        sampleStrategy = 'random';
+        // Calculate offset for random sampling: use row count if available
+        const rowCount = table.rowCount || 1000000; // Default to 1M if unknown
+        const sampleSize = table.sampleSize || 1000;
+        // Offset increases with each random sample
+        sampleOffset = (samplesAnalyzed - 1) * sampleSize;
+        // Wrap around if offset exceeds row count
+        if (sampleOffset >= rowCount) {
+          sampleOffset = sampleOffset % Math.max(rowCount - sampleSize, 1);
+        }
+      }
+
       // Log the analysis request for debugging
-      console.log(`Starting statistical analysis for table: ${table.name} (${id}) in database: ${table.databaseId}`);
-      console.log(`Table selected: ${table.isSelected}`)
+      console.log(`Starting statistical analysis for table: ${table.name} (${id})`);
+      console.log(`Sample strategy: ${sampleStrategy}, offset: ${sampleOffset}, samples analyzed: ${samplesAnalyzed}`);
+
+      // Connect to get primary key
+      const config = connection.config as any;
+      const connected = await postgresAnalyzer.connect(config);
+      if (!connected) {
+        return res.status(500).json({ error: 'Failed to connect to PostgreSQL' });
+      }
+
+      // Get actual primary key column name
+      let primaryKey = await postgresAnalyzer.getPrimaryKeyColumn(table.name, table.schema);
+      if (!primaryKey) {
+        primaryKey = 'ctid'; // Fallback to ctid if no primary key
+      }
+
+      await postgresAnalyzer.disconnect();
+
+      // Generate SQL query that will be executed
+      const sampleSize = table.sampleSize || 1000;
+      let sqlQuery = '';
+      if (sampleStrategy === 'top') {
+        sqlQuery = `SELECT * FROM "${table.schema}"."${table.name}" ORDER BY "${primaryKey}" ASC LIMIT ${sampleSize}`;
+      } else if (sampleStrategy === 'bottom') {
+        sqlQuery = `SELECT * FROM "${table.schema}"."${table.name}" ORDER BY "${primaryKey}" DESC LIMIT ${sampleSize}`;
+      } else {
+        sqlQuery = `SELECT * FROM "${table.schema}"."${table.name}" ORDER BY "${primaryKey}" ASC LIMIT ${sampleSize} OFFSET ${sampleOffset}`;
+      }
 
       const job = await storage.createAnalysisJob({
         databaseId: table.databaseId,
         type: "statistical",
         status: "running",
         progress: 0,
-        result: null,
+        result: JSON.stringify({
+          tableId: id,
+          tableName: table.name,
+          schema: table.schema,
+          sampleStrategy,
+          sampleSize,
+          sampleOffset,
+          sqlQuery,
+          status: 'initializing'
+        }),
         error: null,
         startedAt: new Date(),
         completedAt: null
       });
 
-      // Run analysis in background
-      statisticalAnalyzer.analyzeTable(id, (progress) => {
-        storage.updateAnalysisJob(job.id, { progress });
-      }).then(result => {
+      // Run analysis in background with sampling
+      statisticalAnalyzer.analyzeTable(
+        id,
+        sampleStrategy,
+        sampleOffset,
+        (progress) => {
+          storage.updateAnalysisJob(job.id, { progress });
+        }
+      ).then(result => {
+        // Merge initial metadata with final result
+        const finalResult = {
+          ...result,
+          tableId: id,
+          tableName: table.name,
+          schema: table.schema,
+          sqlQuery,
+          sampleStrategy,
+          sampleSize,
+          sampleOffset: sampleStrategy === 'random' ? sampleOffset : undefined
+        };
+
         storage.updateAnalysisJob(job.id, {
           status: "completed",
           progress: 100,
-          result: JSON.stringify(result),
+          result: JSON.stringify(finalResult),
           completedAt: new Date()
         });
       }).catch(error => {
@@ -2616,14 +2690,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id, jobId } = req.params;
       const jobs = await storage.getAnalysisJobs(id);
       const job = jobs.find(j => j.id === jobId);
-      
+
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
-      
+
       res.json(job);
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch job" });
+    }
+  });
+
+  // Delete analysis jobs (optionally filter by type)
+  app.delete("/api/databases/:id/jobs", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { type } = req.query;
+
+      await storage.deleteAnalysisJobs(id, type as string | undefined);
+      res.json({ success: true, message: `Jobs ${type ? `of type '${type}' ` : ''}deleted successfully` });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to delete jobs" });
+    }
+  });
+
+  // Reset statistical analysis (clear jobs and reset sample counts)
+  app.post("/api/databases/:id/reset-analysis", async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Delete statistical jobs
+      await storage.deleteAnalysisJobs(id, 'statistical');
+
+      // Reset sample counts
+      await storage.resetTableSamples(id);
+
+      res.json({
+        success: true,
+        message: 'Statistical analysis reset successfully. All jobs cleared and sample counts reset to 0.'
+      });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to reset analysis" });
     }
   });
 
