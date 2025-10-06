@@ -41,8 +41,6 @@ export const tables = pgTable("tables", {
   lastUpdated: timestamp("last_updated"),
   isSelected: boolean("is_selected").default(false),
   sampleSize: integer("sample_size").default(1000),
-  samplesAnalyzed: integer("samples_analyzed").default(0),
-  lastSampleStrategy: text("last_sample_strategy"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
