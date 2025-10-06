@@ -32,7 +32,6 @@ export interface IStorage {
   getTablesByDatabaseId(databaseId: string): Promise<Table[]>;
   getTable(id: string): Promise<Table | undefined>;
   updateTableSelection(id: string, isSelected: boolean, sampleSize?: number): Promise<void>;
-  updateTable(id: string, updates: Partial<Table>): Promise<void>;
   getSelectedTables(databaseId: string): Promise<Table[]>;
 
   // Column methods
@@ -63,11 +62,7 @@ export interface IStorage {
   getAnalysisJobs(databaseId: string): Promise<AnalysisJob[]>;
   updateAnalysisJob(jobId: string, updates: Partial<AnalysisJob>): Promise<void>;
   getAnalysisJob(jobId: string): Promise<AnalysisJob | undefined>;
-  deleteAnalysisJobs(databaseId: string, type?: string): Promise<void>;
-
-  // Table reset methods
-  resetTableSamples(databaseId: string): Promise<void>;
-
+  
   // Context item methods (for batched processing)
   upsertContextForTable(contextItem: InsertContextItem): Promise<ContextItem>;
   getContextByTableId(tableId: string): Promise<ContextItem | undefined>;
@@ -186,14 +181,7 @@ export class DatabaseStorage implements IStorage {
     if (sampleSize !== undefined) {
       updates.sampleSize = sampleSize;
     }
-
-    await db
-      .update(tables)
-      .set(updates)
-      .where(eq(tables.id, id));
-  }
-
-  async updateTable(id: string, updates: Partial<Table>): Promise<void> {
+    
     await db
       .update(tables)
       .set(updates)
@@ -364,34 +352,6 @@ export class DatabaseStorage implements IStorage {
       .from(analysisJobs)
       .where(eq(analysisJobs.id, jobId));
     return job || undefined;
-  }
-
-  async deleteAnalysisJobs(databaseId: string, type?: string): Promise<void> {
-    if (type) {
-      // Delete jobs of specific type for this database
-      await db
-        .delete(analysisJobs)
-        .where(and(
-          eq(analysisJobs.databaseId, databaseId),
-          eq(analysisJobs.type, type)
-        ));
-    } else {
-      // Delete all jobs for this database
-      await db
-        .delete(analysisJobs)
-        .where(eq(analysisJobs.databaseId, databaseId));
-    }
-  }
-
-  async resetTableSamples(databaseId: string): Promise<void> {
-    // Reset samplesAnalyzed and lastSampleStrategy for all tables in database
-    await db
-      .update(tables)
-      .set({
-        samplesAnalyzed: 0,
-        lastSampleStrategy: null
-      })
-      .where(eq(tables.databaseId, databaseId));
   }
 
   async upsertContextForTable(contextItem: InsertContextItem): Promise<ContextItem> {
