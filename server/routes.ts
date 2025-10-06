@@ -305,6 +305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await schemaAnalyzer.analyzeDatabase(id);
       res.json(result);
     } catch (error) {
+      console.error('Schema analysis error:', error);
       res.status(500).json({ error: error instanceof Error ? error.message : "Schema analysis failed" });
     }
   });
@@ -315,6 +316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tables = await storage.getTablesByDatabaseId(id);
       res.json(tables);
     } catch (error) {
+      console.error('Get tables error:', error);
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch tables" });
     }
   });
